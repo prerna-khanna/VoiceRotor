@@ -1,0 +1,7 @@
+# Configuration
+Config.swift
+*.plist.private
+
+# API keys and secrets
+*.pem
+*.p12
