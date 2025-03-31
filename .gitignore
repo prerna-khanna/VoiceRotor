@@ -1,0 +1,8 @@
+# Configuration
+Config.swift
+*.plist.private
+
+# API keys and secrets
+*.pem
+*.p12
+.DS_Store
