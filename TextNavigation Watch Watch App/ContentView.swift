@@ -2,7 +2,6 @@ import SwiftUI
 import WatchConnectivity
 import WatchKit
 
-
 struct WatchAppView: View {
     @StateObject private var crownManager = CrownRotationManager()
     @StateObject private var motionManager = MotionManager()
@@ -30,13 +29,9 @@ struct WatchAppView: View {
             }
         }
         .padding()
-        .focusable() // Make the view focusable to receive digital crown events
-        .digitalCrownRotation($crownValue,from: 0, through: 100, by: 1, intent: .adjusting)
-        { event in
-            if isActive && event.offset != 0 {
-                crownManager.sendCrownData(delta: event.offset)
-            }
-        }        .onAppear {
+        .focusable()
+        .digitalCrownRotation($crownValue)
+        .onAppear {
             print("WatchAppView appeared")
             motionManager.startUpdates()
         }

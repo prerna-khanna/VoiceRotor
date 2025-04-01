@@ -8,7 +8,6 @@ class CrownRotationManager: NSObject, ObservableObject {
     
     override init() {
         super.init()
-        print("CrownRotationManager initialized")
         setupWatchConnectivity()
     }
     
@@ -17,7 +16,6 @@ class CrownRotationManager: NSObject, ObservableObject {
             session = WCSession.default
             session?.delegate = self
             session?.activate()
-            print("WCSession activation requested")
         }
     }
     
@@ -26,13 +24,14 @@ class CrownRotationManager: NSObject, ObservableObject {
             return
         }
         
-        let message = ["crownDelta": delta]
+        let message: [String: Any] = [
+            "crownDelta": delta,
+            "notificationName": "WatchCrownRotation"
+        ]
         
         session.sendMessage(message, replyHandler: nil) { error in
             print("Error sending crown data: \(error.localizedDescription)")
         }
-        
-        print("Sent crown delta: \(delta)")
     }
 }
 
@@ -40,8 +39,6 @@ extension CrownRotationManager: WCSessionDelegate {
     func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
         if let error = error {
             print("WCSession activation failed: \(error.localizedDescription)")
-        } else {
-            print("WCSession activated with state: \(activationState.rawValue)")
         }
     }
     

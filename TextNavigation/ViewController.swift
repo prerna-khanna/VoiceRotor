@@ -76,13 +76,50 @@ class ViewController: UIViewController, UITextFieldDelegate, WCSessionDelegate, 
 
         // Continuously monitor text field interaction
         monitorTextFieldInteraction()
+        
+        setupCrownNavigationObserver()
     }
+
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         // Programmatically select the custom action rotor when the app becomes active
         print("App has appeared. Re-selecting Custom Action rotor.")
         reselectCustomActionRotor()
+    }
+    
+    private func setupCrownNavigationObserver() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleCrownRotation(_:)),
+            name: Notification.Name("WatchCrownRotation"),
+            object: nil
+        )
+    }
+
+    @objc private func handleCrownRotation(_ notification: Notification) {
+        guard let crownDelta = notification.userInfo?["crownDelta"] as? Double else {
+            return
+        }
+        
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            
+            // Determine search direction based on crown rotation
+            let searchDirection: UIAccessibilityCustomRotor.Direction =
+                crownDelta > 0 ? .next : .previous
+            
+            // Create search predicate
+            let predicate = UIAccessibilityCustomRotorSearchPredicate()
+            predicate.searchDirection = searchDirection
+            
+            // Move cursor using existing method
+            _ = self.moveCursor(
+                in: self.userInputTextField,
+                for: predicate,
+                granularity: self.selectedGranularity
+            )
+        }
     }
 
     private func setupCustomActionRotor() {
@@ -447,26 +484,14 @@ class ViewController: UIViewController, UITextFieldDelegate, WCSessionDelegate, 
             NotificationCenter.default.post(name: .didReceiveRotationData, object: nil, userInfo: message)
         }
         // Handle crown rotation data
+       
         else if let crownDelta = message["crownDelta"] as? Double {
-            print("Received crown delta: \(crownDelta)")
-            
-            // Only process crown movements if enough time has passed since the last movement
-            // This helps prevent too rapid text navigation
-            let now = Date()
-            if now.timeIntervalSince(lastCrownMovementTime) >= crownMovementThreshold {
-                lastCrownMovementTime = now
-                
-                // Determine direction based on crown rotation
-                let direction: NavigationDirection = crownDelta > 0 ? .forward : .backward
-                
-                // Use magnitude for "how far" to move (can be used for acceleration)
-                let magnitude = min(1.0, abs(crownDelta))
-                
-                // Process the crown movement
-                DispatchQueue.main.async { [weak self] in
-                    self?.processCrownMovement(direction: direction, magnitude: magnitude)
-                }
-            }
+            // Post a notification that can be caught by handleCrownRotation
+            NotificationCenter.default.post(
+                name: Notification.Name("WatchCrownRotation"),
+                object: nil,
+                userInfo: ["crownDelta": crownDelta]
+            )
         } else {
             print("Received message with unknown data.")
         }
@@ -474,6 +499,8 @@ class ViewController: UIViewController, UITextFieldDelegate, WCSessionDelegate, 
     
     // Process crown movement to navigate text
     private func processCrownMovement(direction: NavigationDirection, magnitude: Double) {
+        print("Processing crown movement - Direction: \(direction), Granularity: \(selectedGranularity)")
+        
         // Determine search direction for accessibility rotor
         let searchDirection: UIAccessibilityCustomRotor.Direction =
             direction == .forward ? .next : .previous
@@ -483,7 +510,9 @@ class ViewController: UIViewController, UITextFieldDelegate, WCSessionDelegate, 
         predicate.searchDirection = searchDirection
         
         // Use the existing moveCursor method with the selected granularity
-        _ = moveCursor(in: userInputTextField, for: predicate, granularity: selectedGranularity)
+        print("About to move cursor with search direction: \(searchDirection)")
+        let result = moveCursor(in: userInputTextField, for: predicate, granularity: selectedGranularity)
+        print("Move cursor result: \(String(describing: result))")
     }
     
     // WatchCrownNavigatorDelegate methods
