@@ -27,7 +27,7 @@ class WatchCrownNavigator: NSObject, WCSessionDelegate {
     private var lastUpdateTime: Date = Date()
     private var pauseTimer: Timer?
     private let pauseThreshold: TimeInterval = 0.5  // Time in seconds to detect a pause
-    private let movementThreshold: Double = 0.05     // Minimum movement to register navigation
+    private let movementThreshold: Double = 0.05    // Minimum movement to register navigation
     private var errorProbabilities: [NSRange: Double] = [:]  // Store error probabilities
     
     // MARK: - Initialization
