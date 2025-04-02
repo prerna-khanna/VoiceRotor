@@ -6,12 +6,17 @@ class CrownRotationManager: NSObject, ObservableObject {
     private var lastSentValue: Double = 0.0
     private var session: WCSession?
     
-    // Sensitivity control
-    private let movementThreshold: Double = 1  // Increased from 0.05 to 0.2
+    // Sensitivity controls with smoother values
+    private let movementThreshold: Double = 0.1  // Reduced from 1.0 for more natural feel
+    private let dampingFactor: Double = 0.5     // Added damping factor to smooth movement
+    
+    // Add a moving average filter to smooth crown movements
+    private var recentDeltas: [Double] = []
+    private let maxRecentDeltas = 3  // Number of values to average
     
     // Rate limiting
     private var lastMessageTime: Date = Date()
-    private let minimumMessageInterval: TimeInterval = 0.25  // At most 4 messages per second
+    private let minimumMessageInterval: TimeInterval = 0.2  // Slightly longer interval (5 per second)
     
     override init() {
         super.init()
@@ -32,13 +37,25 @@ class CrownRotationManager: NSObject, ObservableObject {
         // Calculate the delta (change) since the last sent value
         let delta = newValue - lastSentValue
         
-        // Only send if the delta is significant (avoid micro-movements)
-        if abs(delta) > movementThreshold {
+        // Add to recent deltas and maintain max size
+        recentDeltas.append(delta)
+        if recentDeltas.count > maxRecentDeltas {
+            recentDeltas.removeFirst()
+        }
+        
+        // Calculate average delta for smoother motion
+        let averageDelta = recentDeltas.reduce(0.0, +) / Double(recentDeltas.count)
+        
+        // Apply damping factor to smooth movements
+        let smoothedDelta = averageDelta * dampingFactor
+        
+        // Only send if the smoothed delta is significant
+        if abs(smoothedDelta) > movementThreshold {
             // Check rate limiting
             let currentTime = Date()
             if currentTime.timeIntervalSince(lastMessageTime) >= minimumMessageInterval {
-                // Normalize delta to prevent extreme values
-                let normalizedDelta = min(max(delta, -1.0), 1.0)
+                // Normalize delta to prevent extreme values - made more moderate
+                let normalizedDelta = min(max(smoothedDelta, -0.5), 0.5)
                 sendCrownData(delta: normalizedDelta)
                 lastSentValue = newValue
                 lastMessageTime = currentTime

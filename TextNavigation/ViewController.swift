@@ -168,79 +168,113 @@ private func correctSentenceInTextField() {
         }
     }
 }
-
-private func moveCursor(in textField: UITextField, for predicate: UIAccessibilityCustomRotorSearchPredicate, granularity: Granularity) -> UIAccessibilityCustomRotorItemResult? {
-    guard let textRange = textField.selectedTextRange else {
-        print("No selected text range.")
-        return nil
-    }
-
-    var currentPosition = predicate.searchDirection == .next ? textRange.end : textRange.start
-    let offset = predicate.searchDirection == .next ? 1 : -1
-
-    print("Moving cursor in direction: \(predicate.searchDirection == .next ? "Next" : "Previous") with granularity: \(granularity)")
-
-    switch granularity {
-    case .character:
-        if let newPosition = textField.position(from: currentPosition, offset: offset) {
-            textField.selectedTextRange = textField.textRange(from: newPosition, to: newPosition)
-            print("Moved cursor by character to new position.")
-            return UIAccessibilityCustomRotorItemResult(targetElement: textField, targetRange: textField.selectedTextRange)
+    
+    
+    private func moveCursor(in textField: UITextField, for predicate: UIAccessibilityCustomRotorSearchPredicate, granularity: Granularity) -> UIAccessibilityCustomRotorItemResult? {
+        guard let textRange = textField.selectedTextRange else {
+            print("No selected text range.")
+            return nil
         }
-    case .word, .line:
-        let direction: UITextDirection = predicate.searchDirection == .next ? UITextDirection.storage(.forward) : UITextDirection.storage(.backward)
-        let boundary: UITextGranularity = (granularity == .word) ? .word : .line
 
-        while true {
-            if let newRange = textField.tokenizer.rangeEnclosingPosition(currentPosition, with: boundary, inDirection: direction) {
-                if (predicate.searchDirection == .next && newRange.start == currentPosition) ||
-                   (predicate.searchDirection == .previous && newRange.end == currentPosition) {
+        var currentPosition = predicate.searchDirection == .next ? textRange.end : textRange.start
+        let offset = predicate.searchDirection == .next ? 1 : -1
+
+        print("Moving cursor in direction: \(predicate.searchDirection == .next ? "Next" : "Previous") with granularity: \(granularity)")
+
+        switch granularity {
+        case .character:
+            if let newPosition = textField.position(from: currentPosition, offset: offset) {
+                if predicate.searchDirection == .next {
+                    // For forward movement - select the character we're moving into
+                    if let currentChar = textField.textRange(from: currentPosition, to: newPosition) {
+                        textField.selectedTextRange = currentChar
+                        
+                        // Simply announce the character directly
+                        if let selectedText = textField.text(in: currentChar) {
+                            textField.announceSelectedTextOnly()
+                        }
+                        print("Selected character after cursor (forward).")
+                    } else {
+                        textField.selectedTextRange = textField.textRange(from: newPosition, to: newPosition)
+                        print("Moved cursor by character to new position (no selection).")
+                    }
+                } else {
+                    // For backward movement - select the character we're moving into
+                    if let previousPosition = textField.position(from: currentPosition, offset: -1) {
+                        if let previousChar = textField.textRange(from: previousPosition, to: currentPosition) {
+                            textField.selectedTextRange = previousChar
+                            
+                            // Simply announce the character
+                            textField.announceSelectedTextOnly()
+                            print("Selected character before cursor (backward).")
+                        } else {
+                            textField.selectedTextRange = textField.textRange(from: newPosition, to: newPosition)
+                            print("Moved cursor by character to new position (no selection).")
+                        }
+                    } else {
+                        textField.selectedTextRange = textField.textRange(from: newPosition, to: newPosition)
+                        print("Moved cursor by character to new position (no selection at boundary).")
+                    }
+                }
+                return UIAccessibilityCustomRotorItemResult(targetElement: textField, targetRange: textField.selectedTextRange)
+            }
+        case .word, .line:
+            let direction: UITextDirection = predicate.searchDirection == .next ? UITextDirection.storage(.forward) : UITextDirection.storage(.backward)
+            let boundary: UITextGranularity = (granularity == .word) ? .word : .line
+
+            while true {
+                if let newRange = textField.tokenizer.rangeEnclosingPosition(currentPosition, with: boundary, inDirection: direction) {
+                    if (predicate.searchDirection == .next && newRange.start == currentPosition) ||
+                       (predicate.searchDirection == .previous && newRange.end == currentPosition) {
+                        if let adjustedPosition = textField.position(from: currentPosition, offset: offset) {
+                            currentPosition = adjustedPosition
+                            print("Adjusted position due to no movement. Current position: \(currentPosition)")
+                            continue
+                        } else {
+                            break
+                        }
+                    }
+                    textField.selectedTextRange = newRange
+                    
+                    // Simply announce the selected text
+                    textField.announceSelectedTextOnly()
+                    print("Moved cursor by \(granularity) to new range.")
+                    return UIAccessibilityCustomRotorItemResult(targetElement: textField, targetRange: newRange)
+                } else {
                     if let adjustedPosition = textField.position(from: currentPosition, offset: offset) {
                         currentPosition = adjustedPosition
-                        print("Adjusted position due to no movement. Current position: \(currentPosition)")
+                        print("Adjusted position due to no range found. Current position: \(currentPosition)")
                         continue
                     } else {
                         break
                     }
                 }
-                textField.selectedTextRange = newRange
-                print("Moved cursor by \(granularity) to new range.")
-                return UIAccessibilityCustomRotorItemResult(targetElement: textField, targetRange: newRange)
-            } else {
-                if let adjustedPosition = textField.position(from: currentPosition, offset: offset) {
-                    currentPosition = adjustedPosition
-                    print("Adjusted position due to no range found. Current position: \(currentPosition)")
-                    continue
-                } else {
-                    break
-                }
             }
-        }
-    case .sentenceCorrection:
-        if predicate.searchDirection == .next {
-            print("Sentence correction triggered, correcting sentence.")
-            let sentenceToCorrect = textField.text ?? ""
-            t5Inference.correctSentence(sentenceToCorrect) { [weak self] correctedSentence in
-                guard let self = self else { return }
-                if let correctedSentence = correctedSentence {
-                    print("Corrected sentence: \(correctedSentence)")
-                    DispatchQueue.main.async {
-                        self.userInputTextField.text = correctedSentence
-                        self.moveCursorToEnd()
+        case .sentenceCorrection:
+            if predicate.searchDirection == .next {
+                print("Sentence correction triggered, correcting sentence.")
+                let sentenceToCorrect = textField.text ?? ""
+                t5Inference.correctSentence(sentenceToCorrect) { [weak self] correctedSentence in
+                    guard let self = self else { return }
+                    if let correctedSentence = correctedSentence {
+                        print("Corrected sentence: \(correctedSentence)")
+                        DispatchQueue.main.async {
+                            self.userInputTextField.text = correctedSentence
+                            self.moveCursorToEnd()
+                        }
+                    } else {
+                        print("Failed to correct the sentence.")
                     }
-                } else {
-                    print("Failed to correct the sentence.")
                 }
+            } else {
+                print("Sentence correction canceled, no changes made.")
             }
-        } else {
-            print("Sentence correction canceled, no changes made.")
+            return nil
         }
+
+        print("Failed to move the cursor.")
         return nil
     }
-
-    print("Failed to move the cursor.")
-    return nil
-}
 
 private func moveCursorToEnd() {
     let endPosition = userInputTextField.endOfDocument
@@ -433,6 +467,13 @@ private func handleCrownRotation(delta: Double) {
     }
 
     func session(_ session: WCSession, didReceiveMessage message: [String : Any]) {
+        // Handle motion status updates
+        if let motionStatus = message["motionStatus"] as? String {
+            print("Received motion status update: \(motionStatus)")
+            // You can use this to update UI or functionality based on watch motion status
+            return
+        }
+        
         // Handle gyroscope rotation data
         if let rotationRateX = message["rotationRateX"] as? Double,
            let rotationRateY = message["rotationRateY"] as? Double,
@@ -443,7 +484,6 @@ private func handleCrownRotation(delta: Double) {
                 
                 if gestureRecognized {
                     if !lastGestureRecognized {
-                        //moveToNextRotor()
                         handleGestureRecognition()
                     }
                     lastGestureRecognized = true

@@ -1,7 +1,7 @@
 import SwiftUI
 import CoreMotion
 import WatchConnectivity
-import WatchKit  // Added for haptic feedback
+import WatchKit
 
 class MotionManager: NSObject, ObservableObject {
     private var motionManager = CMMotionManager()
@@ -71,6 +71,9 @@ class MotionManager: NSObject, ObservableObject {
                 timer.invalidate()
             }
         }
+        
+        // Send a notification to the phone that motion data collection has started
+        sendStatusUpdate(started: true)
     }
     
     func stopSendingData() {
@@ -80,6 +83,21 @@ class MotionManager: NSObject, ObservableObject {
         
         // Play a distinct haptic when streaming stops automatically
         WKInterfaceDevice.current().play(.notification)
+        
+        // Send a notification to the phone that motion data collection has stopped
+        sendStatusUpdate(started: false)
+    }
+    
+    private func sendStatusUpdate(started: Bool) {
+        guard let session = session, session.isReachable else { return }
+        
+        let message: [String: Any] = [
+            "motionStatus": started ? "started" : "stopped"
+        ]
+        
+        session.sendMessage(message, replyHandler: nil) { error in
+            print("Error sending motion status update: \(error)")
+        }
     }
     
     private func sendMotionData() {
