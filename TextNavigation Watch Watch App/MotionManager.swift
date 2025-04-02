@@ -1,6 +1,7 @@
 import SwiftUI
 import CoreMotion
 import WatchConnectivity
+import WatchKit  // Added for haptic feedback
 
 class MotionManager: NSObject, ObservableObject {
     private var motionManager = CMMotionManager()
@@ -52,6 +53,9 @@ class MotionManager: NSObject, ObservableObject {
         isSendingData = true
         timeRemaining = 20
         
+        // Play haptic feedback when starting data collection
+        WKInterfaceDevice.current().play(.success)
+        
         // Start timer to stop sending after 20 seconds
         streamTimer?.invalidate()
         streamTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
@@ -73,6 +77,9 @@ class MotionManager: NSObject, ObservableObject {
         isSendingData = false
         streamTimer?.invalidate()
         streamTimer = nil
+        
+        // Play a distinct haptic when streaming stops automatically
+        WKInterfaceDevice.current().play(.notification)
     }
     
     private func sendMotionData() {

@@ -7,7 +7,7 @@ class CrownRotationManager: NSObject, ObservableObject {
     private var session: WCSession?
     
     // Sensitivity control
-    private let movementThreshold: Double = 0.2  // Increased from 0.05 to 0.2
+    private let movementThreshold: Double = 1  // Increased from 0.05 to 0.2
     
     // Rate limiting
     private var lastMessageTime: Date = Date()

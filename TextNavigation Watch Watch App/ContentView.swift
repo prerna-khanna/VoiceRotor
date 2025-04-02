@@ -45,8 +45,8 @@ struct WatchAppView: View {
             $crownValue,
             from: -5.0,
             through: 5.0,
-            by: 0.2,  // Increased step size for better control
-            sensitivity: .medium,  // Changed from high to medium
+            by: 0.2,
+            sensitivity: .medium,
             isContinuous: true,
             isHapticFeedbackEnabled: true
         )
@@ -77,20 +77,22 @@ struct WatchAppView: View {
         }
         .contentShape(Rectangle())
         .onTapGesture {
-            isActive.toggle()
-            print("Crown navigation \(isActive ? "activated" : "deactivated")")
-            
-            // Reset values when toggling
-            if isActive {
+            // Only allow tapping to start, not to stop
+            if !isActive {
+                isActive = true
+                print("Crown navigation activated")
                 crownValue = 0.0
                 lastMovementDirection = "None"
                 motionManager.startSendingData()
-            } else {
-                motionManager.stopSendingData()
+                
+                // After 20 seconds, automatically deactivate
+                DispatchQueue.main.asyncAfter(deadline: .now() + 20.0) {
+                    if isActive {
+                        isActive = false
+                        print("Crown navigation automatically deactivated after 20 seconds")
+                    }
+                }
             }
-            
-            // Add feedback for mode change
-            WKInterfaceDevice.current().play(.notification)
         }
     }
 }
