@@ -5,11 +5,14 @@ import WatchConnectivity
 class MotionManager: NSObject, ObservableObject {
     private var motionManager = CMMotionManager()
     private var session: WCSession?
+    private var streamTimer: Timer?
+    private let streamDuration: TimeInterval = 20.0 // 20 seconds streaming duration
     
     @Published var rotationRateX: Double = 0.0
     @Published var rotationRateY: Double = 0.0
     @Published var rotationRateZ: Double = 0.0
     @Published var isSendingData: Bool = false
+    @Published var timeRemaining: Int = 20
     
     override init() {
         super.init()
@@ -47,10 +50,29 @@ class MotionManager: NSObject, ObservableObject {
     
     func startSendingData() {
         isSendingData = true
+        timeRemaining = 20
+        
+        // Start timer to stop sending after 20 seconds
+        streamTimer?.invalidate()
+        streamTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
+            guard let self = self else {
+                timer.invalidate()
+                return
+            }
+            
+            self.timeRemaining -= 1
+            
+            if self.timeRemaining <= 0 {
+                self.stopSendingData()
+                timer.invalidate()
+            }
+        }
     }
     
     func stopSendingData() {
         isSendingData = false
+        streamTimer?.invalidate()
+        streamTimer = nil
     }
     
     private func sendMotionData() {

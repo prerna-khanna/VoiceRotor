@@ -471,7 +471,9 @@ class ViewController: UIViewController, UITextFieldDelegate, WCSessionDelegate, 
                 
                 if gestureRecognized {
                     if !lastGestureRecognized {
-                        handleGestureRecognition()
+                        DispatchQueue.main.async {
+                            self.handleGestureRecognition()
+                        }
                     }
                     lastGestureRecognized = true
                 } else {
@@ -483,38 +485,80 @@ class ViewController: UIViewController, UITextFieldDelegate, WCSessionDelegate, 
 
             NotificationCenter.default.post(name: .didReceiveRotationData, object: nil, userInfo: message)
         }
-        // Handle crown rotation data
-       
+        // Handle crown rotation data - FIXED: Direct processing instead of notification
         else if let crownDelta = message["crownDelta"] as? Double {
-            // Post a notification that can be caught by handleCrownRotation
-            NotificationCenter.default.post(
-                name: Notification.Name("WatchCrownRotation"),
-                object: nil,
-                userInfo: ["crownDelta": crownDelta]
-            )
+            print("Received crown delta: \(crownDelta)")
+            
+            // Process crown movement directly to ensure immediate response
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                
+                // Determine direction based on crown delta
+                let direction: NavigationDirection = crownDelta > 0 ? .forward : .backward
+                
+                // Use absolute value for magnitude
+                let magnitude = min(1.0, abs(crownDelta))
+                
+                // Directly use the processor
+                self.processCrownMovement(direction: direction, magnitude: magnitude)
+            }
         } else {
-            print("Received message with unknown data.")
+            print("Received message with unknown data: \(message)")
         }
     }
     
     // Process crown movement to navigate text
+    // Updated processCrownMovement method for ViewController.swift
+
+    // Keep track of last movement time to implement debouncing
+    private var lastCrownProcessingTime = Date()
+    private let crownProcessingThreshold: TimeInterval = 0.2 // 200ms minimum between processing
+
+    // Process crown movement to navigate text with debouncing
     private func processCrownMovement(direction: NavigationDirection, magnitude: Double) {
-        print("Processing crown movement - Direction: \(direction), Granularity: \(selectedGranularity)")
+        // Add debouncing to prevent too rapid movements
+        let now = Date()
+        guard now.timeIntervalSince(lastCrownProcessingTime) >= crownProcessingThreshold else {
+            print("Skipping crown movement due to debounce")
+            return
+        }
+        lastCrownProcessingTime = now
+        
+        print("Processing crown movement - Direction: \(direction), Magnitude: \(magnitude), Granularity: \(selectedGranularity)")
+        
+        // Ensure text field has focus
+        if !userInputTextField.isFirstResponder {
+            userInputTextField.becomeFirstResponder()
+            // Return early to allow focus to settle
+            return
+        }
         
         // Determine search direction for accessibility rotor
         let searchDirection: UIAccessibilityCustomRotor.Direction =
             direction == .forward ? .next : .previous
         
-        // Create a predicate for the search - use the no-parameter initializer
+        // Create a predicate for the search
         let predicate = UIAccessibilityCustomRotorSearchPredicate()
         predicate.searchDirection = searchDirection
         
         // Use the existing moveCursor method with the selected granularity
-        print("About to move cursor with search direction: \(searchDirection)")
+        print("Moving cursor with search direction: \(searchDirection), granularity: \(selectedGranularity)")
+        
+        // Simplified haptic feedback - use one generator and reuse it
+        let feedbackGenerator = UISelectionFeedbackGenerator()
+        feedbackGenerator.prepare()
+        
         let result = moveCursor(in: userInputTextField, for: predicate, granularity: selectedGranularity)
-        print("Move cursor result: \(String(describing: result))")
+        
+        // Provide haptic feedback based on result
+        if result != nil || selectedGranularity == .sentenceCorrection {
+            feedbackGenerator.selectionChanged()
+            print("Successfully moved cursor or processed sentence correction")
+        } else {
+            // Only provide error feedback for actual failures
+            print("No cursor movement occurred")
+        }
     }
-    
     // WatchCrownNavigatorDelegate methods
     func didNavigate(direction: NavigationDirection, magnitude: Double) {
         processCrownMovement(direction: direction, magnitude: magnitude)
