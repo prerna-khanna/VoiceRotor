@@ -24,13 +24,14 @@ class ViewController: UIViewController, UITextFieldDelegate, WCSessionDelegate, 
     var isRecording = false
     var isRecognitionMode = true
     var selectedOption: Int = 1
-    private var wcSession: WCSession?
+    var wcSession: WCSession?
     private var lastGestureRecognized = false
     private var touchCoordinates: [String] = []
     private var gestureRecognition = GestureRecognition(bufferSize: 20)
     private var gestureCount = 0 // Track the number of gestures detected
-    private var selectedGranularity: Granularity = .character // Default granularity
+    var selectedGranularity: Granularity = .character // Default granularity
     private let t5Inference = T5Inference() // Create an instance of T5Inference
+    var voiceRecognitionManager: SimpleVoiceRecognitionManager?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -67,6 +68,13 @@ class ViewController: UIViewController, UITextFieldDelegate, WCSessionDelegate, 
 
         // Continuously monitor text field interaction
         monitorTextFieldInteraction()
+        
+        setupSimpleVoiceRecognition()
+            
+            NotificationCenter.default.addObserver(self,
+                                                   selector: #selector(handleVoiceOverFocusChanged(notification:)),
+                                                   name: UIAccessibility.elementFocusedNotification,
+                                                   object: nil)
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -116,13 +124,13 @@ class ViewController: UIViewController, UITextFieldDelegate, WCSessionDelegate, 
 
     @objc private func handleGestureRecognition() {
         self.gestureCount += 1
-
+        
         if gestureCount > 4 {
             gestureCount = 1
         }
-
+        
         print("Gesture recognized. Count: \(self.gestureCount)")
-
+        
         switch gestureCount {
         case 1:
             selectedGranularity = .character
@@ -133,17 +141,20 @@ class ViewController: UIViewController, UITextFieldDelegate, WCSessionDelegate, 
         case 3:
             selectedGranularity = .line
             print("Selected granularity: Line")
-       case 4:
+        case 4:
             selectedGranularity = .sentenceCorrection
             print("Selected granularity: Sentence Correction")
         default:
             selectedGranularity = .character
         }
-
+        
+        // Update voice recognition granularity
+        voiceRecognitionManager?.setGranularity(selectedGranularity)
+        
         let rotorName = "Custom \(selectedGranularity)"
         UIAccessibility.post(notification: .announcement, argument: rotorName)
         print("\(rotorName) rotor selected programmatically.")
-
+        
         reselectCustomActionRotor()
     }
 
@@ -467,10 +478,21 @@ private func handleCrownRotation(delta: Double) {
     }
 
     func session(_ session: WCSession, didReceiveMessage message: [String : Any]) {
+        print("DEBUG: iPhone received message: \(message)")
+        
         // Handle motion status updates
         if let motionStatus = message["motionStatus"] as? String {
             print("Received motion status update: \(motionStatus)")
-            // You can use this to update UI or functionality based on watch motion status
+            return
+        }
+        
+        // Handle voice commands
+        if let voiceCommand = message["voiceCommand"] as? String {
+            print("Voice: Received voice command from watch: \(voiceCommand)")
+            
+            DispatchQueue.main.async { [weak self] in
+                self?.processWatchVoiceCommand(from: message)
+            }
             return
         }
         
@@ -478,9 +500,13 @@ private func handleCrownRotation(delta: Double) {
         if let rotationRateX = message["rotationRateX"] as? Double,
            let rotationRateY = message["rotationRateY"] as? Double,
            let rotationRateZ = message["rotationRateZ"] as? Double {
-
+            
             if isRecognitionMode {
-                let gestureRecognized = gestureRecognition.addGyroData(rotationRateX: rotationRateX, rotationRateY: rotationRateY, rotationRateZ: rotationRateZ)
+                let gestureRecognized = gestureRecognition.addGyroData(
+                    rotationRateX: rotationRateX,
+                    rotationRateY: rotationRateY,
+                    rotationRateZ: rotationRateZ
+                )
                 
                 if gestureRecognized {
                     if !lastGestureRecognized {
@@ -491,11 +517,18 @@ private func handleCrownRotation(delta: Double) {
                     lastGestureRecognized = false
                 }
             } else if isRecording {
-            
-                gestureRecognition.addGyroData(rotationRateX: rotationRateX, rotationRateY: rotationRateY, rotationRateZ: rotationRateZ)
+                gestureRecognition.addGyroData(
+                    rotationRateX: rotationRateX,
+                    rotationRateY: rotationRateY,
+                    rotationRateZ: rotationRateZ
+                )
             }
-
-            NotificationCenter.default.post(name: .didReceiveRotationData, object: nil, userInfo: message)
+            
+            NotificationCenter.default.post(
+                name: .didReceiveRotationData,
+                object: nil,
+                userInfo: message
+            )
         }
         // Handle crown rotation data
         else if let crownDelta = message["crownDelta"] as? Double {
@@ -505,9 +538,6 @@ private func handleCrownRotation(delta: Double) {
             DispatchQueue.main.async { [weak self] in
                 self?.handleCrownRotation(delta: crownDelta)
             }
-        }
-        else {
-            print("Received message with unknown data.")
         }
     }
 

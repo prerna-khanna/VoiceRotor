@@ -1,14 +1,21 @@
 import SwiftUI
 import WatchConnectivity
 import WatchKit
+import AVFoundation
 
 struct WatchAppView: View {
     @StateObject private var crownManager = CrownRotationManager()
     @StateObject private var motionManager = MotionManager()
+    @StateObject private var voiceManager = WatchVoiceCommandManager()
     @State private var crownValue: Double = 0.0
     @State private var isActive: Bool = false
-    @State private var isMotionActive: Bool = false // New state to track motion separately
+    @State private var isMotionActive: Bool = false
+    @State private var isListeningForVoice: Bool = false
     @State private var lastMovementDirection: String = "None"
+    @State private var lastCrownValue: Double = 0.0
+    
+    // Timer for detecting crown press simulation
+    @State private var crownPressTimer: Timer? = nil
     
     var body: some View {
         VStack(spacing: 8) {
@@ -22,6 +29,12 @@ struct WatchAppView: View {
                 Text("Last Move: \(lastMovementDirection)")
                     .font(.caption)
                     .foregroundColor(.green)
+                
+                if isListeningForVoice {
+                    Text("Listening...")
+                        .font(.headline)
+                        .foregroundColor(.red)
+                }
                 
                 if isMotionActive {
                     Group {
@@ -43,6 +56,12 @@ struct WatchAppView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
+                
+                // Instruction text that's accessible to VoiceOver
+                Text("Long press anywhere for voice")
+                    .font(.caption)
+                    .foregroundColor(isListeningForVoice ? .red : .gray)
+                    .accessibilityLabel("Long press anywhere on screen to activate voice commands")
             } else {
                 Text("Tap to Start")
                     .font(.headline)
@@ -54,8 +73,8 @@ struct WatchAppView: View {
             $crownValue,
             from: -5.0,
             through: 5.0,
-            by: 0.1, // More fine-grained control with smaller steps
-            sensitivity: .low, // Lower sensitivity for smoother experience
+            by: 0.1,
+            sensitivity: .low,
             isContinuous: true,
             isHapticFeedbackEnabled: true
         )
@@ -71,6 +90,9 @@ struct WatchAppView: View {
                 // Update the crown manager
                 crownManager.updateRotation(newValue: newValue)
                 
+                // Check for crown press simulation (if crown is held still for a moment)
+                checkForCrownPress(newValue)
+                
                 // Add haptic feedback - use lighter feedback for smoother feel
                 WKInterfaceDevice.current().play(.click)
             }
@@ -78,11 +100,29 @@ struct WatchAppView: View {
         .onAppear {
             print("WatchAppView appeared")
             motionManager.startUpdates()
+            
+            // Register for notifications about side button press
+            NotificationCenter.default.addObserver(
+                forName: NSNotification.Name("SideButtonPressed"),
+                object: nil,
+                queue: .main) { _ in
+                    self.handleSideButtonPress()
+                }
+            
+            // Enable button event handling in the app
+            enableButtonPressDetection()
         }
         .onDisappear {
             print("WatchAppView disappeared")
             motionManager.stopUpdates()
             motionManager.stopSendingData()
+            
+            // Stop any active crown press detection
+            crownPressTimer?.invalidate()
+            crownPressTimer = nil
+            
+            // Remove notification observer
+            NotificationCenter.default.removeObserver(self)
         }
         .contentShape(Rectangle())
         .onTapGesture {
@@ -123,5 +163,61 @@ struct WatchAppView: View {
                 WKInterfaceDevice.current().play(.success)
             }
         }
+        // Add a simple onLongPressGesture that triggers only after the app is active
+        .onLongPressGesture(minimumDuration: 1.0) {
+            if isActive {
+                print("DEBUG: Long press detected on watch")
+                startVoiceRecognition()
+            }
+        }
+    }
+    
+    private func enableButtonPressDetection() {
+        print("DEBUG: Setting up long press detection as primary voice activation method")
+    }
+    
+    private func checkForCrownPress(_ newValue: Double) {
+        // We're not using crown movement patterns for activation anymore
+        // Just update last value for crown rotation tracking
+        lastCrownValue = newValue
+    }
+    
+    private func handleSideButtonPress() {
+        guard isActive else { return }
+        
+        print("DEBUG: Side button pressed!")
+        
+        // Toggle voice listening state
+        startVoiceRecognition()
+    }
+    
+    private func startVoiceRecognition() {
+        // Don't start if already listening
+        if isListeningForVoice {
+            return
+        }
+        
+        isListeningForVoice = true
+            
+        // Start listening for voice commands
+        print("DEBUG: Starting voice command listening")
+        WKInterfaceDevice.current().play(.start)
+        
+        // Send message to phone to start voice recognition
+        voiceManager.startVoiceRecognition()
+        
+        // Auto-stop after 10 seconds (safety timeout)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10.0) {
+            if self.isListeningForVoice {
+                self.stopVoiceRecognition()
+            }
+        }
+    }
+    
+    private func stopVoiceRecognition() {
+        isListeningForVoice = false
+        print("DEBUG: Stopping voice command listening")
+        WKInterfaceDevice.current().play(.stop)
+        voiceManager.stopVoiceRecognition()
     }
 }
