@@ -135,7 +135,7 @@ struct WatchAppView: View {
                 lastMovementDirection = "None"
                 motionManager.startSendingData()
                 
-                // After 20 seconds, automatically deactivate only motion tracking
+                // After 5 seconds, automatically deactivate only motion tracking
                 DispatchQueue.main.asyncAfter(deadline: .now() + 20.0) {
                     if isMotionActive {
                         isMotionActive = false
@@ -207,7 +207,7 @@ struct WatchAppView: View {
         voiceManager.startVoiceRecognition()
         
         // Auto-stop after 10 seconds (safety timeout)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 10.0) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
             if self.isListeningForVoice {
                 self.stopVoiceRecognition()
             }

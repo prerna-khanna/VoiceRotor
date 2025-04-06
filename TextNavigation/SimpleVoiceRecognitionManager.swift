@@ -796,7 +796,7 @@ class SimpleVoiceRecognitionManager: NSObject {
         case .clearFormat:
             announcement = "Cleared formatting"
         case .unknown:
-            announcement = "Not a command: \(content ?? "")"
+            announcement = "No command: \(content ?? "")"
         }
         
         // Announce via VoiceOver if it's running
