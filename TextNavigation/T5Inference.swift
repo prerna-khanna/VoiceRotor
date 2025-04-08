@@ -8,7 +8,7 @@ import Foundation
 class T5Inference {
     // Use the API endpoint pattern from the Medium article
     private let apiUrl = "https://api-inference.huggingface.co/models/t5-small"
-    private let apiKey = "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"
+    private let apiKey = Config.huggingFaceAPIToken
     private var isModelLoaded = false
     private let modelLoadingQueue = DispatchQueue(label: "modelLoadingQueue", attributes: .concurrent)
     
