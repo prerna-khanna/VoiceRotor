@@ -29,6 +29,7 @@ enum VoiceOperation: String {
     case unselect = "unselect"
     case cursorPosition = "cursor"
     case unknown
+   
     
     // Parse from recognized text
     static func from(_ text: String) -> (operation: VoiceOperation, content: String?) {
@@ -115,6 +116,8 @@ class SimpleVoiceRecognitionManager: NSObject {
     private let speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
+    private var textErrorAnalyzer: TextErrorAnalyzer?
+
     private let audioEngine = AVAudioEngine()
     
     // Private variables
@@ -124,11 +127,12 @@ class SimpleVoiceRecognitionManager: NSObject {
     
     // MARK: - Setup
     
-    init(textField: UITextField?) {
+    init(textField: UITextField?, errorAnalyzer: TextErrorAnalyzer? = nil) {
         self.textField = textField
+        self.textErrorAnalyzer = errorAnalyzer
         super.init()
         
-        // Request authorization on init
+        // Existing code for authorization, etc.
         SFSpeechRecognizer.requestAuthorization { [weak self] status in
             DispatchQueue.main.async {
                 if status == .authorized {
@@ -550,20 +554,59 @@ class SimpleVoiceRecognitionManager: NSObject {
         if text.isEmpty {
             // If the text field is empty, announce that
             UIAccessibility.post(notification: .announcement, argument: "Text field is empty")
-        } else {
-            // Announce the entire text
-            UIAccessibility.post(notification: .announcement, argument: text)
+            return
+        }
+        
+        print("Voice: Reading text field with intelligent error detection")
+        
+        // First announce the entire text
+        UIAccessibility.post(notification: .announcement, argument: "Reading text: \(text)")
+        
+        // Highlight the text visually
+        let allTextRange = textField.textRange(from: textField.beginningOfDocument, to: textField.endOfDocument)
+        textField.selectedTextRange = allTextRange
+        
+        // Then analyze for errors
+        print("Voice: Analyzing text for errors: \"\(text)\"")
+        textErrorAnalyzer?.analyzeText(text) { [weak self] errors in
+            guard let self = self else { return }
             
-            // Highlight the text visually as well
-            let allTextRange = textField.textRange(from: textField.beginningOfDocument, to: textField.endOfDocument)
-            textField.selectedTextRange = allTextRange
-            
-            // Add a slight delay before deselecting
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self, weak textField] in
-                // Reset selection to cursor at the end to avoid interfering with future commands
-                if let textField = textField {
-                    let endPosition = textField.endOfDocument
-                    textField.selectedTextRange = textField.textRange(from: endPosition, to: endPosition)
+            DispatchQueue.main.async {
+                if errors.isEmpty {
+                    // No errors detected, announce this after a short delay
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        UIAccessibility.post(notification: .announcement, argument: "No errors detected in the text.")
+                        print("Voice: No errors detected in the text")
+                    }
+                } else {
+                    // Format errors for accessibility announcement
+                    let errorMessage = self.textErrorAnalyzer?.formatErrorsForAccessibility(errors)
+                    
+                    // Announce errors after a delay to allow the text to be read first
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                        UIAccessibility.post(notification: .announcement, argument: errorMessage)
+                        print("Voice: Announced error analysis: \(errorMessage)")
+                        
+                        // Highlight the first error if there's a range
+                        if let firstErrorWithRange = errors.first(where: { $0.range != nil }),
+                           let errorRange = firstErrorWithRange.range,
+                           let beginningPosition = textField.position(from: textField.beginningOfDocument, offset: errorRange.location),
+                           let endPosition = textField.position(from: beginningPosition, offset: errorRange.length) {
+                            
+                            // Select the error text to visually highlight it
+                            textField.selectedTextRange = textField.textRange(from: beginningPosition, to: endPosition)
+                            print("Voice: Highlighted first error in text field")
+                        }
+                    }
+                }
+                
+                // Reset selection to cursor at the end after analysis to avoid interfering with future commands
+                DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) { [weak textField] in
+                    if let textField = textField {
+                        let endPosition = textField.endOfDocument
+                        textField.selectedTextRange = textField.textRange(from: endPosition, to: endPosition)
+                        print("Voice: Reset cursor to end of text")
+                    }
                 }
             }
         }

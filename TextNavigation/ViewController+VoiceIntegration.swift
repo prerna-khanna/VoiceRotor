@@ -12,18 +12,24 @@ import Speech
 // Extension to add improved voice control functionality to ViewController
 extension ViewController {
     
+    
     // MARK: - Setup
     
     func setupSimpleVoiceRecognition() {
-        // Create voice recognition manager with text field
-        voiceRecognitionManager = SimpleVoiceRecognitionManager(textField: userInputTextField)
+        // Initialize text error analyzer with the existing T5Inference instance
+        self.textErrorAnalyzer = TextErrorAnalyzer(t5Inference: t5Inference)
+        print("Voice: Created TextErrorAnalyzer with existing T5Inference instance")
+        
+        
+        
+        // Create voice recognition manager with text field and analyzer
+        voiceRecognitionManager = SimpleVoiceRecognitionManager(textField: userInputTextField, errorAnalyzer: self.textErrorAnalyzer)
         
         // Listen for voice recognition notifications
         setupVoiceRecognitionObservers()
         
-        print("Voice: Simple voice recognition manager setup complete")
+        print("Voice: Simple voice recognition manager setup complete with error analysis capability")
     }
-    
     private func setupVoiceRecognitionObservers() {
         // Add observers for voice recognition events
         NotificationCenter.default.addObserver(

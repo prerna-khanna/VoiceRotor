@@ -30,8 +30,9 @@ class ViewController: UIViewController, UITextFieldDelegate, WCSessionDelegate, 
     private var gestureRecognition = GestureRecognition(bufferSize: 20)
     private var gestureCount = 0 // Track the number of gestures detected
     var selectedGranularity: Granularity = .character // Default granularity
-    private let t5Inference = T5Inference() // Create an instance of T5Inference
+    let t5Inference = T5Inference() // Create an instance of T5Inference
     var voiceRecognitionManager: SimpleVoiceRecognitionManager?
+    var textErrorAnalyzer: TextErrorAnalyzer?
 
     override func viewDidLoad() {
         super.viewDidLoad()

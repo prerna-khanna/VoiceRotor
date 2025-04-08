@@ -2,147 +2,137 @@
 //  T5Inference.swift
 //  TextNavigation
 //
-//  Created by Prerna Khanna on 3/27/25.
-//
 
 import Foundation
 
 class T5Inference {
-    private let apiUrl = "https://api-inference.huggingface.co/models/vennify/t5-base-grammar-correction"
-    private let apiKey = Config.huggingFaceAPIToken //Replace with your actual Hugging Face API token
-    private let maxRetries = 5
-    private let retryDelay: TimeInterval = 5.0 // Retry after 5 seconds
+    // Use the API endpoint pattern from the Medium article
+    private let apiUrl = "https://api-inference.huggingface.co/models/t5-small"
+    private let apiKey = "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"
     private var isModelLoaded = false
     private let modelLoadingQueue = DispatchQueue(label: "modelLoadingQueue", attributes: .concurrent)
-
-    func loadModel(completion: @escaping (Bool) -> Void) {
-        print("Loading model...")
-        sendWarmUpRequest(retriesRemaining: maxRetries) { [weak self] success in
-            guard let self = self else { return }
-            self.modelLoadingQueue.async(flags: .barrier) {
-                self.isModelLoaded = success
-                print("Model loaded: \(success)")
-                completion(success)
-            }
+    
+    // Public property to check if model is loaded
+    var modelIsLoaded: Bool {
+        var result = false
+        modelLoadingQueue.sync {
+            result = isModelLoaded
         }
+        return result
     }
 
-    private func sendWarmUpRequest(retriesRemaining: Int, completion: @escaping (Bool) -> Void) {
-        guard let url = URL(string: apiUrl) else {
-            print("Invalid API URL")
-            completion(false)
-            return
-        }
-
-        var request = URLRequest(url: url)
-        request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.httpMethod = "POST"
-        
-        let json: [String: Any] = ["inputs": "Warm-up request"]
-        let jsonData = try! JSONSerialization.data(withJSONObject: json)
-        
-        request.httpBody = jsonData
-        
-        let task = URLSession.shared.dataTask(with: request) { data, response, error in
-            guard let data = data else {
-                print("Failed to get data: \(error?.localizedDescription ?? "Unknown error")")
-                completion(false)
-                return
-            }
+    func loadModel(completion: @escaping (Bool) -> Void) {
+        // Simple test request to check if model is loaded
+        let testInput = "Hello, world!"
+        inferenceRequest(with: testInput) { [weak self] result in
+            guard let self = self else { return }
             
-            if let rawResponse = String(data: data, encoding: .utf8) {
-                print("Warm-up API response: \(rawResponse)")
-                
-                if rawResponse.contains("Model vennify/t5-base-grammar-correction is currently loading") && retriesRemaining > 0 {
-                    print("Model is loading, retrying in \(self.retryDelay) seconds... (\(retriesRemaining) retries left)")
-                    DispatchQueue.global().asyncAfter(deadline: .now() + self.retryDelay) {
-                        self.sendWarmUpRequest(retriesRemaining: retriesRemaining - 1, completion: completion)
-                    }
-                    return
+            switch result {
+            case .success(_):
+                self.modelLoadingQueue.async(flags: .barrier) {
+                    self.isModelLoaded = true
+                    print("Model loaded successfully")
+                    completion(true)
+                }
+            case .failure(let error):
+                self.modelLoadingQueue.async(flags: .barrier) {
+                    self.isModelLoaded = false
+                    print("Model loading failed: \(error.localizedDescription)")
+                    completion(false)
                 }
             }
-            
-            completion(true)
         }
-        
-        task.resume()
     }
 
     func correctSentence(_ sentence: String, completion: @escaping (String?) -> Void) {
-        // Wait until the model is loaded
-        modelLoadingQueue.async { [weak self] in
-            guard let self = self else { return }
-            
-            self.modelLoadingQueue.sync { // Ensure that any writes to isModelLoaded are completed
-                if !self.isModelLoaded {
-                    print("Model is not yet loaded. Cannot proceed with inference.")
-                    DispatchQueue.main.async {
-                        completion(nil)
-                    }
-                    return
+        // Use a grammar correction-specific prompt
+        let prompt = "grammar: \(sentence)"
+        
+        inferenceRequest(with: prompt) { result in
+            switch result {
+            case .success(let output):
+                DispatchQueue.main.async {
+                    completion(output)
                 }
-            }
-
-            // Proceed with sentence correction after confirming the model is loaded
-            self.sendRequest(sentence, retriesRemaining: self.maxRetries, completion: completion)
-        }
-    }
-
-    private func sendRequest(_ sentence: String, retriesRemaining: Int, completion: @escaping (String?) -> Void) {
-        guard let url = URL(string: apiUrl) else {
-            print("Invalid API URL")
-            completion(nil)
-            return
-        }
-
-        var request = URLRequest(url: url)
-        request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.httpMethod = "POST"
-        
-        // Add the "grammar: " prefix as required by the model
-        let prefixedSentence = "grammar: \(sentence)"
-        let json: [String: Any] = ["inputs": prefixedSentence]
-        let jsonData = try! JSONSerialization.data(withJSONObject: json)
-        
-        request.httpBody = jsonData
-        
-        print("Sending request to API with input sentence: '\(prefixedSentence)'")
-        
-        let task = URLSession.shared.dataTask(with: request) { data, response, error in
-            guard let data = data else {
-                print("Failed to get data: \(error?.localizedDescription ?? "Unknown error")")
+            case .failure(let error):
+                print("Grammar correction failed: \(error.localizedDescription)")
                 DispatchQueue.main.async {
                     completion(nil)
                 }
+            }
+        }
+    }
+    
+    // Following the approach from the Medium article
+    private func inferenceRequest(with text: String, completion: @escaping (Result<String, Error>) -> Void) {
+        guard let url = URL(string: apiUrl) else {
+            completion(.failure(NSError(domain: "T5Inference", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])))
+            return
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 30.0
+        
+        // Set headers as in the article
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        
+        // Prepare payload
+        let payload: [String: Any] = ["inputs": text]
+        
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+        } catch {
+            completion(.failure(error))
+            return
+        }
+        
+        // Print debug info
+        print("Sending request to: \(url.absoluteString)")
+        print("With payload: \(text)")
+        
+        // Create and start the task
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            // Handle network error
+            if let error = error {
+                print("Network error: \(error.localizedDescription)")
+                completion(.failure(error))
                 return
             }
             
-            if let rawResponse = String(data: data, encoding: .utf8) {
-                print("Raw API response: \(rawResponse)")
-                
-                if rawResponse.contains("Model vennify/t5-base-grammar-correction is currently loading") && retriesRemaining > 0 {
-                    print("Model is still loading, retrying in \(self.retryDelay) seconds... (\(retriesRemaining) retries left)")
-                    DispatchQueue.global().asyncAfter(deadline: .now() + self.retryDelay) {
-                        self.sendRequest(sentence, retriesRemaining: retriesRemaining - 1, completion: completion)
-                    }
-                    return
-                }
+            // Log HTTP status
+            if let httpResponse = response as? HTTPURLResponse {
+                print("HTTP Status: \(httpResponse.statusCode)")
             }
             
-            if let output = try? JSONSerialization.jsonObject(with: data, options: []) as? [[String: Any]],
-               let correctedText = output.first?["generated_text"] as? String {
-                print("Received corrected sentence: '\(correctedText)'")
-                DispatchQueue.main.async {
-                    completion(correctedText)
-                }
-            } else {
-                print("Failed to parse the response or no correction made.")
-                DispatchQueue.main.async {
-                    completion(nil)
-                }
+            // Ensure we have data
+            guard let data = data else {
+                print("No data received")
+                completion(.failure(NSError(domain: "T5Inference", code: -2, userInfo: [NSLocalizedDescriptionKey: "No data received"])))
+                return
             }
-        }
-        
-        task.resume()
+            
+            // Debug: print raw response
+            if let rawResponse = String(data: data, encoding: .utf8) {
+                print("Raw API response: \(rawResponse)")
+            }
+            
+            // Parse the response
+            do {
+                if let jsonResponse = try JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+                   let firstResult = jsonResponse.first,
+                   let generatedText = firstResult["translation_text"] as? String {  // Change "generated_text" to "translation_text"
+                    print("Successfully parsed response: \(generatedText)")
+                    completion(.success(generatedText))
+                } else {
+                    print("Invalid response format")
+                    completion(.failure(NSError(domain: "T5Inference", code: -3, userInfo: [NSLocalizedDescriptionKey: "Invalid response format"])))
+                }
+            } catch {
+                print("JSON parsing error: \(error.localizedDescription)")
+                completion(.failure(error))
+            }
+        }.resume()
     }
 }
