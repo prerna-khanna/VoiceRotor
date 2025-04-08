@@ -6,11 +6,12 @@
 import Foundation
 
 class T5Inference {
-    // Use the API endpoint pattern from the Medium article
-    private let apiUrl = "https://api-inference.huggingface.co/models/t5-small"
+    // Use the grammar correction specific model
+    private let apiUrl = "https://api-inference.huggingface.co/models/vennify/t5-base-grammar-correction"
     private let apiKey: String
     private var isModelLoaded = false
     private let modelLoadingQueue = DispatchQueue(label: "modelLoadingQueue", attributes: .concurrent)
+    private let maxRetries = 2
     
     // Public property to check if model is loaded
     var modelIsLoaded: Bool {
@@ -28,49 +29,58 @@ class T5Inference {
 
     func loadModel(completion: @escaping (Bool) -> Void) {
         // Simple test request to check if model is loaded
-        let testInput = "Correct this sentence in English: Hello, world!"
-        inferenceRequest(with: testInput) { [weak self] result in
+        let testInput = "grammar: i has appls in tha kitchen"
+        inferenceRequest(with: testInput, retryCount: maxRetries) { [weak self] result in
             guard let self = self else { return }
             
             switch result {
             case .success(_):
                 self.modelLoadingQueue.async(flags: .barrier) {
                     self.isModelLoaded = true
-                    print("Model loaded successfully")
+                    print("T5: Model loaded successfully")
                     completion(true)
                 }
             case .failure(let error):
                 self.modelLoadingQueue.async(flags: .barrier) {
                     self.isModelLoaded = false
-                    print("Model loading failed: \(error.localizedDescription)")
+                    print("T5: Model loading failed: \(error.localizedDescription)")
                     completion(false)
                 }
             }
         }
     }
 
-    func correctSentence(_ sentence: String, completion: @escaping (String?) -> Void) {
-        // Use an English-specific grammar correction prompt
-        let prompt = "Correct English grammar: \(sentence)"
+    // General correction method (handles both spelling and grammar)
+    func correctText(_ text: String, completion: @escaping (String?) -> Void) {
+        // Skip empty text
+        guard !text.isEmpty else {
+            DispatchQueue.main.async {
+                completion(nil)
+            }
+            return
+        }
         
-        inferenceRequest(with: prompt) { result in
+        // Use the grammar prefix that the model expects
+        let prompt = "grammar: \(text)"
+        
+        inferenceRequest(with: prompt, retryCount: maxRetries) { result in
             switch result {
             case .success(let output):
                 // Verify the response is valid and in English
-                if self.isValidEnglishResponse(output, originalText: sentence) {
+                if self.isValidEnglishResponse(output, originalText: text) {
                     DispatchQueue.main.async {
                         // Clean up the response
                         let cleanedOutput = self.cleanResponse(output)
                         completion(cleanedOutput)
                     }
                 } else {
-                    print("Grammar correction failed: Response not in English or invalid")
+                    print("T5: Text correction failed: Response not in English or invalid")
                     DispatchQueue.main.async {
                         completion(nil)
                     }
                 }
             case .failure(let error):
-                print("Grammar correction failed: \(error.localizedDescription)")
+                print("T5: Text correction failed: \(error.localizedDescription)")
                 DispatchQueue.main.async {
                     completion(nil)
                 }
@@ -78,8 +88,49 @@ class T5Inference {
         }
     }
     
-    // Following the approach from the Medium article without language parameter
-    private func inferenceRequest(with text: String, completion: @escaping (Result<String, Error>) -> Void) {
+    // Alias for backward compatibility
+    func correctSentence(_ sentence: String, completion: @escaping (String?) -> Void) {
+        correctText(sentence, completion: completion)
+    }
+    
+    // Method specifically focused on spelling corrections
+    func correctSpelling(_ text: String, completion: @escaping (String?) -> Void) {
+        // Skip empty text
+        guard !text.isEmpty else {
+            DispatchQueue.main.async {
+                completion(nil)
+            }
+            return
+        }
+        
+        // Use a prompt that emphasizes spelling correction
+        let prompt = "grammar: \(text)"  // Using grammar prompt works for spelling too
+        
+        inferenceRequest(with: prompt, retryCount: maxRetries) { result in
+            switch result {
+            case .success(let output):
+                if self.isValidEnglishResponse(output, originalText: text) {
+                    DispatchQueue.main.async {
+                        let cleanedOutput = self.cleanResponse(output)
+                        completion(cleanedOutput)
+                    }
+                } else {
+                    print("T5: Spelling correction failed: Response not in English or invalid")
+                    DispatchQueue.main.async {
+                        completion(nil)
+                    }
+                }
+            case .failure(let error):
+                print("T5: Spelling correction failed: \(error.localizedDescription)")
+                DispatchQueue.main.async {
+                    completion(nil)
+                }
+            }
+        }
+    }
+    
+    // Enhanced request method with retry logic
+    private func inferenceRequest(with text: String, retryCount: Int, completion: @escaping (Result<String, Error>) -> Void) {
         guard let url = URL(string: apiUrl) else {
             completion(.failure(NSError(domain: "T5Inference", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])))
             return
@@ -87,7 +138,7 @@ class T5Inference {
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.timeoutInterval = 30.0
+        request.timeoutInterval = 10.0  // Reduced timeout for better user experience
         
         // Set headers
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -103,83 +154,101 @@ class T5Inference {
             return
         }
         
-        // Print debug info
-        print("Sending request to: \(url.absoluteString)")
-        print("With payload: \(text)")
-        
         // Create and start the task
-        URLSession.shared.dataTask(with: request) { data, response, error in
-            // Handle network error
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            guard let self = self else { return }
+            
+            // Handle network error with retry
             if let error = error {
-                print("Network error: \(error.localizedDescription)")
+                print("T5: Network error: \(error.localizedDescription)")
+                
+                if retryCount > 0 {
+                    print("T5: Retrying... (\(retryCount) attempts left)")
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 1.0) {
+                        self.inferenceRequest(with: text, retryCount: retryCount - 1, completion: completion)
+                    }
+                    return
+                }
+                
                 completion(.failure(error))
                 return
             }
             
-            // Log HTTP status
-            if let httpResponse = response as? HTTPURLResponse {
-                print("HTTP Status: \(httpResponse.statusCode)")
+            // Check for model loading status (may need retry)
+            if let data = data, let rawResponse = String(data: data, encoding: .utf8),
+               rawResponse.contains("loading") || rawResponse.contains("still loading") {
                 
-                // Check for error status codes
-                if httpResponse.statusCode >= 400 {
-                    let errorMessage = "HTTP error: \(httpResponse.statusCode)"
-                    print(errorMessage)
-                    completion(.failure(NSError(
-                        domain: "T5Inference",
-                        code: httpResponse.statusCode,
-                        userInfo: [NSLocalizedDescriptionKey: errorMessage]
-                    )))
+                if retryCount > 0 {
+                    print("T5: Model still loading, retrying in 1 second... (\(retryCount) attempts left)")
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 1.0) {
+                        self.inferenceRequest(with: text, retryCount: retryCount - 1, completion: completion)
+                    }
                     return
                 }
+            }
+            
+            // Check for HTTP error status codes
+            if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode >= 400 {
+                let errorMessage = "T5: HTTP error: \(httpResponse.statusCode)"
+                print(errorMessage)
+                
+                // Retry for server errors (5xx) but not client errors (4xx)
+                if httpResponse.statusCode >= 500 && retryCount > 0 {
+                    print("T5: Server error, retrying... (\(retryCount) attempts left)")
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 1.0) {
+                        self.inferenceRequest(with: text, retryCount: retryCount - 1, completion: completion)
+                    }
+                    return
+                }
+                
+                completion(.failure(NSError(
+                    domain: "T5Inference",
+                    code: httpResponse.statusCode,
+                    userInfo: [NSLocalizedDescriptionKey: errorMessage]
+                )))
+                return
             }
             
             // Ensure we have data
             guard let data = data else {
-                print("No data received")
+                print("T5: No data received")
                 completion(.failure(NSError(domain: "T5Inference", code: -2, userInfo: [NSLocalizedDescriptionKey: "No data received"])))
                 return
-            }
-            
-            // Debug: print raw response
-            if let rawResponse = String(data: data, encoding: .utf8) {
-                print("Raw API response: \(rawResponse)")
-                
-                // Check for error in JSON
-                if rawResponse.contains("error") {
-                    print("API returned error: \(rawResponse)")
-                    completion(.failure(NSError(
-                        domain: "T5Inference",
-                        code: -6,
-                        userInfo: [NSLocalizedDescriptionKey: "API error: \(rawResponse)"]
-                    )))
-                    return
-                }
-                
-                // Check if we got HTML
-                if rawResponse.contains("<!DOCTYPE html>") || rawResponse.contains("<html") {
-                    print("Received HTML instead of JSON")
-                    completion(.failure(NSError(
-                        domain: "T5Inference",
-                        code: -5,
-                        userInfo: [NSLocalizedDescriptionKey: "Received HTML instead of JSON"]
-                    )))
-                    return
-                }
             }
             
             // Parse the response
             do {
                 if let jsonResponse = try JSONSerialization.jsonObject(with: data) as? [[String: Any]],
                    let firstResult = jsonResponse.first,
-                   let generatedText = firstResult["generated_text"] as? String {  // Changed from translation_text to generated_text
-                    print("Successfully parsed response: \(generatedText)")
+                   let generatedText = firstResult["generated_text"] as? String {
+                    print("T5: Successfully parsed response: \(generatedText)")
                     completion(.success(generatedText))
                 } else {
-                    print("Invalid response format")
+                    print("T5: Invalid response format")
+                    
+                    // Try again if we have retries left
+                    if retryCount > 0 {
+                        print("T5: Retrying with different format... (\(retryCount) attempts left)")
+                        DispatchQueue.global().asyncAfter(deadline: .now() + 1.0) {
+                            self.inferenceRequest(with: text, retryCount: retryCount - 1, completion: completion)
+                        }
+                        return
+                    }
+                    
                     completion(.failure(NSError(domain: "T5Inference", code: -3, userInfo: [NSLocalizedDescriptionKey: "Invalid response format"])))
                 }
             } catch {
-                print("JSON parsing error: \(error.localizedDescription)")
+                print("T5: JSON parsing error: \(error.localizedDescription)")
+                
+                // Try again for parsing errors
+                if retryCount > 0 {
+                    print("T5: Retrying after parsing error... (\(retryCount) attempts left)")
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 1.0) {
+                        self.inferenceRequest(with: text, retryCount: retryCount - 1, completion: completion)
+                    }
+                    return
+                }
+                
                 completion(.failure(error))
             }
         }.resume()
@@ -188,7 +257,7 @@ class T5Inference {
     // Helper method to verify the response is valid English
     private func isValidEnglishResponse(_ response: String, originalText: String) -> Bool {
         // Check if response contains the original prompt
-        if response.contains("Correct English grammar:") || response.contains("grammar:") {
+        if response.contains("grammar:") || response.contains("fix spelling:") {
             return false
         }
         
@@ -220,9 +289,10 @@ class T5Inference {
     private func cleanResponse(_ response: String) -> String {
         // Remove any prefixes that might be artifacts from the model
         var cleaned = response
-            .replacingOccurrences(of: "Correct English grammar:", with: "")
+            .replacingOccurrences(of: "grammar:", with: "")
             .replacingOccurrences(of: "Grammar:", with: "")
-            .replacingOccurrences(of: "Grammatik:", with: "")
+            .replacingOccurrences(of: "fix spelling:", with: "")
+            .replacingOccurrences(of: "Fix spelling:", with: "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         
         // If the cleaned result is empty, return the original response

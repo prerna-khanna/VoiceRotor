@@ -117,8 +117,14 @@ extension ViewController {
     // MARK: - Watch Communication
     
     func sendVoiceStatusToWatch(status: String, text: String? = nil, error: String? = nil) {
-        guard let session = wcSession, session.isReachable else {
-            print("Voice: Watch not reachable for status update")
+        guard let session = wcSession else {
+            print("Voice: WCSession not available")
+            return
+        }
+        
+        if !session.isReachable {
+            print("Voice: Watch not reachable, storing status update for later")
+            // Could implement a queue for pending messages
             return
         }
         
@@ -138,6 +144,7 @@ extension ViewController {
     }
     
     // Process voice commands from watch
+    // In the processWatchVoiceCommand method
     func processWatchVoiceCommand(from message: [String: Any]) {
         if let voiceCommand = message["voiceCommand"] as? String {
             DispatchQueue.main.async { [weak self] in
@@ -147,7 +154,10 @@ extension ViewController {
                 case "startListening":
                     self.startVoiceRecognition()
                 case "stopListening":
-                    self.stopVoiceRecognition()
+                    // Add a small delay to allow final recognition processing to complete
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        self.stopVoiceRecognition()
+                    }
                 default:
                     print("Voice: Unknown voice command from watch: \(voiceCommand)")
                 }
