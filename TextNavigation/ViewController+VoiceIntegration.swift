@@ -182,12 +182,6 @@ extension ViewController {
             return
         }
         
-        // Ignore cancellation errors
-        if errorMessage.contains("canceled") || errorMessage.contains("cancelled") {
-            print("Voice: Ignoring cancellation error")
-            return
-        }
-        
         print("Voice: Recognition error: \(errorMessage)")
         
         DispatchQueue.main.async { [weak self] in
@@ -224,9 +218,9 @@ extension ViewController {
             self.sendVoiceStatusToWatch(status: "recognized", text: content)
             
             // Reset UI after delay
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                self.updateOptionDisplay()
-            }
+            //DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            //    self.updateOptionDisplay()
+            //}
         }
     }
 }

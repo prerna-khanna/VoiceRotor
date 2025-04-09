@@ -76,91 +76,138 @@ class TextErrorAnalyzer {
     /// - Parameters:
     ///   - text: The text to analyze
     ///   - completion: Callback with array of detected errors
+    // In TextErrorAnalyzer.swift
+    
     func analyzeText(_ text: String, completion: @escaping ([DetectedError]) -> Void) {
         print("TextErrorAnalyzer: Starting analysis of text: \"\(text)\"")
-        
-        // If text is empty, return immediately
         guard !text.isEmpty else {
             print("TextErrorAnalyzer: Text is empty, no analysis needed")
             completion([])
             return
         }
         
-        // Results arrays
-        var errors: [DetectedError] = []
-        
-        // STEP 1: Perform basic spelling checks using UITextChecker as a fallback
+        // Perform local checks first - these will be our fallback
         let localSpellingErrors = checkSpelling(text)
-        
-        // STEP 2: Add basic grammar checks (these always run locally)
         let localGrammarErrors = checkBasicGrammar(text)
+        let localErrors = localSpellingErrors + localGrammarErrors
         
-        // STEP 3: Use T5 model for comprehensive correction if available
+        // Helper function to limit errors
+        let limitErrors = { (errors: [DetectedError]) -> [DetectedError] in
+            return errors.count > 5 ? Array(errors.prefix(5)) : errors
+        }
+        
+        // Use T5 model if available and loaded
         if let t5Inference = t5Inference, t5Inference.modelIsLoaded {
-            // Create a dispatch group to coordinate API calls
-            let group = DispatchGroup()
-            
-            // Variable to store model errors
-            var modelErrors: [DetectedError] = []
-            
-            // Enter the group for the API call
-            group.enter()
-            
-            // Use the model for both spelling and grammar correction
+            print("TextErrorAnalyzer: Attempting correction via T5 model...")
+            // Make the API call - rely on its completion handler
             t5Inference.correctText(text) { [weak self] correctedText in
-                defer { group.leave() }
-                guard let self = self, let correctedText = correctedText, correctedText != text else { return }
-                
-                print("TextErrorAnalyzer: Received model correction: \"\(correctedText)\"")
-                
-                // Find the differences between original and corrected text
-                let differences = self.findTextDifferences(original: text, corrected: correctedText)
-                
-                // Add each difference as an error
-                for diff in differences {
-                    let errorType: ErrorType = diff.isLikelySpellingError ? .spelling : .grammar
-                    modelErrors.append(DetectedError(
-                        type: errorType,
-                        description: "\(errorType.description.capitalized) error: '\(diff.original)' should be '\(diff.corrected)'",
-                        errorText: diff.original,
-                        correction: diff.corrected
-                    ))
+                guard let self = self else {
+                    // Self is nil, fallback to local checks safely on main thread
+                    print("TextErrorAnalyzer: Self reference lost, falling back to local checks.")
+                    DispatchQueue.main.async { completion(Array(localErrors.prefix(5))) }
+                    return
                 }
                 
-                print("TextErrorAnalyzer: Found \(differences.count) errors using language model")
-            }
-            
-            // Wait for API call with timeout (3 seconds)
-            let waitResult = group.wait(timeout: .now() + 3.0)
-            
-            if waitResult == .success && !modelErrors.isEmpty {
-                // Use model errors if available
-                errors = modelErrors
-                print("TextErrorAnalyzer: Using \(modelErrors.count) errors from language model")
-            } else {
-                // Fall back to local errors if model failed or timed out
-                errors = localSpellingErrors + localGrammarErrors
-                if waitResult == .timedOut {
-                    print("TextErrorAnalyzer: T5 inference timed out, using local checks")
+                if let correctedText = correctedText, correctedText != text {
+                    // T5 provided a *different* correction
+                    print("TextErrorAnalyzer: Received model correction: \"\(correctedText)\"")
+                    let differences = self.findTextDifferences(original: text, corrected: correctedText)
+                    
+                    if !differences.isEmpty {
+                        // CREATE ERROR OBJECTS FROM DIFFERENCES - REPLACE THIS WHOLE BLOCK:
+                        var modelErrors: [DetectedError] = []
+                        
+                        // Split texts for context analysis
+                        let originalWords = text.components(separatedBy: .whitespacesAndNewlines)
+                        let correctedWords = correctedText.components(separatedBy: .whitespacesAndNewlines)
+                        
+                        for diff in differences {
+                            let errorDescription: String
+                            let errorType: ErrorType
+                            
+                            if diff.original == "missing word" {
+                                errorType = .grammar // Use grammar type for missing words
+                                
+                                // Try to find position context
+                                if let index = correctedWords.firstIndex(of: diff.corrected) {
+                                    let before = index > 0 ? correctedWords[index-1] : ""
+                                    let after = index < correctedWords.count-1 ? correctedWords[index+1] : ""
+                                    
+                                    if !before.isEmpty && !after.isEmpty {
+                                        errorDescription = "Missing word: '\(diff.corrected)' between '\(before)' and '\(after)'"
+                                    } else if !before.isEmpty {
+                                        errorDescription = "Missing word: '\(diff.corrected)' after '\(before)'"
+                                    } else if !after.isEmpty {
+                                        errorDescription = "Missing word: '\(diff.corrected)' before '\(after)'"
+                                    } else {
+                                        errorDescription = "Missing word: '\(diff.corrected)'"
+                                    }
+                                } else {
+                                    errorDescription = "Missing word: '\(diff.corrected)'"
+                                }
+                            } else if diff.corrected == "extra word" {
+                                errorType = .grammar // Use grammar type for extra words
+                                
+                                // Try to find position context
+                                if let index = originalWords.firstIndex(of: diff.original) {
+                                    let before = index > 0 ? originalWords[index-1] : ""
+                                    let after = index < originalWords.count-1 ? originalWords[index+1] : ""
+                                    
+                                    if !before.isEmpty && !after.isEmpty {
+                                        errorDescription = "Extra word: '\(diff.original)' between '\(before)' and '\(after)'"
+                                    } else if !before.isEmpty {
+                                        errorDescription = "Extra word: '\(diff.original)' after '\(before)'"
+                                    } else if !after.isEmpty {
+                                        errorDescription = "Extra word: '\(diff.original)' before '\(after)'"
+                                    } else {
+                                        errorDescription = "Extra word: '\(diff.original)'"
+                                    }
+                                } else {
+                                    errorDescription = "Extra word: '\(diff.original)'"
+                                }
+                            } else {
+                                errorType = .spelling // Keep spelling type for actual misspellings
+                                errorDescription = "'\(diff.original)' should be '\(diff.corrected)'"
+                            }
+                            
+                            modelErrors.append(DetectedError(
+                                type: errorType,
+                                description: errorDescription,
+                                errorText: diff.original,
+                                correction: diff.corrected
+                            ))
+                        }
+                        
+                        print("TextErrorAnalyzer: Found \(modelErrors.count) errors using language model.")
+                        // Call completion with model errors on main thread
+                        DispatchQueue.main.async { completion(limitErrors(modelErrors)) }
+                        
+                    } else {
+                        // T5 correction resulted in no identifiable differences (safety check)
+                        print("TextErrorAnalyzer: Model provided correction, but no differences found. Falling back to local checks.")
+                        // Call completion with local errors on main thread
+                        DispatchQueue.main.async { completion(limitErrors(localErrors)) }
+                    }
+                } else if let correctedText = correctedText, correctedText == text {
+                    // T5 returned the original text (no errors found by model)
+                    print("TextErrorAnalyzer: Model found no errors (returned original text). Falling back to local checks.")
+                    // Call completion with local errors on main thread
+                    DispatchQueue.main.async { completion(limitErrors(localErrors)) }
                 } else {
-                    print("TextErrorAnalyzer: T5 model returned no errors, using local checks")
+                    // T5 call failed (returned nil, timed out *within T5*, or other error)
+                    print("TextErrorAnalyzer: Model correction failed or did not provide a result. Falling back to local checks.")
+                    // Call completion with local errors on main thread
+                    DispatchQueue.main.async { completion(limitErrors(localErrors)) }
                 }
             }
         } else {
-            // Use local checks if model isn't available
-            errors = localSpellingErrors + localGrammarErrors
-            print("TextErrorAnalyzer: T5 model not available, using local checks only")
+            // T5 model not available or not loaded
+            print("TextErrorAnalyzer: T5 Model not available or not loaded. Using local checks.")
+            // Call completion with local errors on main thread
+            DispatchQueue.main.async { completion(limitErrors(localErrors)) }
         }
-        
-        // Limit to most important errors if there are too many
-        if errors.count > 5 {
-            errors = Array(errors.prefix(5))
-            print("TextErrorAnalyzer: Limiting to top 5 errors for clarity")
-        }
-        
-        print("TextErrorAnalyzer: Analysis complete. Found \(errors.count) errors")
-        completion(errors)
     }
+    
     
     // Format errors into an accessibility-friendly message with punctuation pronunciation
     func formatErrorsForAccessibility(_ errors: [DetectedError]) -> String {
@@ -168,32 +215,26 @@ class TextErrorAnalyzer {
             return "No errors detected."
         }
         
-        // Create a more specific message that announces exactly where errors are
-        var message = "Found \(errors.count) potential \(errors.count > 1 ? "issues" : "issue"): "
+        var message = "Found \(errors.count) \(errors.count > 1 ? "errors" : "error"): "
         
         for (index, error) in errors.enumerated() {
             let errorNumber = index + 1
             
-            // Include the specific error text and correction if available
-            switch error.type {
-            case .spelling, .grammar:
-                if let errorText = error.errorText, let correction = error.correction {
-                    // Add explicit pronunciation of punctuation in the correction
-                    let pronounceableCorrection = addPronounceablePunctuation(correction)
-                    message += "\n\(errorNumber). \(error.type.description.capitalized) error: '\(errorText)' should be '\(pronounceableCorrection)'."
-                } else {
-                    message += "\n\(errorNumber). \(error.description)"
-                }
-                
-            case .context:
-                message += "\n\(errorNumber). \(error.description)"
+            // Simplified messaging without categorization
+            if error.errorText?.starts(with: "missing word") == true {
+                // Missing word case
+                message += "\n\(errorNumber). Missing '\(error.correction ?? "")' \(error.errorText?.replacingOccurrences(of: "missing word ", with: "") ?? "")"
+            } else if error.correction?.starts(with: "extra word") == true {
+                // Extra word case
+                message += "\n\(errorNumber). Extra word '\(error.errorText ?? "")' \(error.correction?.replacingOccurrences(of: "extra word ", with: "") ?? "")"
+            } else {
+                // Regular word correction case (spelling/grammar)
+                message += "\n\(errorNumber). '\(error.errorText ?? "")' should be '\(error.correction ?? "")'"
             }
         }
         
-        print("TextErrorAnalyzer: Formatted error message for accessibility: \"\(message)\"")
         return message
     }
-    
     // MARK: - Private Methods
     
     /// Check for spelling errors using UITextChecker and custom dictionary
@@ -238,8 +279,8 @@ class TextErrorAnalyzer {
                 // Create error object
                 let error = DetectedError(
                     type: .spelling,
-                    description: "Spelling error: '\(misspelledWord)'" +
-                        (correction != nil ? " (Suggestion: \(correction!))" : ""),
+                    description: " '\(misspelledWord)'" +
+                    (correction != nil ? " (Suggestion: \(correction!))" : ""),
                     range: misspelledRange,
                     errorText: misspelledWord,
                     correction: correction
@@ -352,93 +393,83 @@ class TextErrorAnalyzer {
         let originalWords = original.components(separatedBy: .whitespacesAndNewlines)
         let correctedWords = corrected.components(separatedBy: .whitespacesAndNewlines)
         
-        // Compare word by word where possible
-        let minWords = min(originalWords.count, correctedWords.count)
+        // Use dynamic programming to find the alignment
+        var i = 0  // original index
+        var j = 0  // corrected index
         
-        for i in 0..<minWords {
-            let origWord = originalWords[i]
-            let corrWord = correctedWords[i]
-            
-            if origWord != corrWord {
-                // Calculate edit distance to determine if it's likely a spelling error
-                let distance = calculateEditDistance(origWord.lowercased(), corrWord.lowercased())
-                let maxLength = max(origWord.count, corrWord.count)
-                
-                // If edit distance is small relative to word length, likely spelling error
-                // otherwise it's probably a grammar error
-                let isSpellingError = Double(distance) / Double(maxLength) < 0.5
-                
-                differences.append(TextDifference(
-                    original: origWord,
-                    corrected: corrWord,
-                    isLikelySpellingError: isSpellingError
-                ))
-            }
-        }
-        
-        // If the texts are different lengths, add extra words as differences
-        if originalWords.count < correctedWords.count {
-            // Words added in correction
-            for i in minWords..<correctedWords.count {
-                differences.append(TextDifference(
-                    original: "(missing)",
-                    corrected: correctedWords[i],
-                    isLikelySpellingError: false
-                ))
-            }
-        } else if originalWords.count > correctedWords.count {
-            // Words removed in correction
-            for i in minWords..<originalWords.count {
-                differences.append(TextDifference(
-                    original: originalWords[i],
-                    corrected: "(should be removed)",
-                    isLikelySpellingError: false
-                ))
-            }
-        }
-        
-        // If we didn't find any specific differences but texts are different
-        if differences.isEmpty && original != corrected {
-            // Fall back to treating the entire text as one difference
-            differences.append(TextDifference(
-                original: original,
-                corrected: corrected,
-                isLikelySpellingError: false
-            ))
-        }
-        
-        return differences
-    }
-    
-    // Calculate Levenshtein edit distance between two strings
-    private func calculateEditDistance(_ s1: String, _ s2: String) -> Int {
-        let s1 = Array(s1)
-        let s2 = Array(s2)
-        let m = s1.count
-        let n = s2.count
-        
-        var dp = Array(repeating: Array(repeating: 0, count: n + 1), count: m + 1)
-        
-        // Initialize first row and column
-        for i in 0...m {
-            dp[i][0] = i
-        }
-        
-        for j in 0...n {
-            dp[0][j] = j
-        }
-        
-        // Fill the matrix
-        for i in 1...m {
-            for j in 1...n {
-                if s1[i-1] == s2[j-1] {
-                    dp[i][j] = dp[i-1][j-1]
+        while i < originalWords.count && j < correctedWords.count {
+            if originalWords[i] == correctedWords[j] {
+                // Words match, move both indices
+                i += 1
+                j += 1
+            } else {
+                // Words don't match - check for insertion (missing word)
+                if j+1 < correctedWords.count && i < originalWords.count && originalWords[i] == correctedWords[j+1] {
+                    // Missing word in original text - find surrounding context
+                    let beforeWord = j > 0 ? correctedWords[j-1] : ""
+                    let afterWord = correctedWords[j+1]
+                    
+                    let contextInfo = !beforeWord.isEmpty && !afterWord.isEmpty ?
+                    "between '\(beforeWord)' and '\(afterWord)'" :
+                    (!beforeWord.isEmpty ? "after '\(beforeWord)'" :
+                        (!afterWord.isEmpty ? "before '\(afterWord)'" : ""))
+                    
+                    differences.append(TextDifference(
+                        original: "missing word \(contextInfo)",
+                        corrected: correctedWords[j],
+                        isLikelySpellingError: false
+                    ))
+                    j += 1  // Only advance corrected index
+                } else if i+1 < originalWords.count && originalWords[i+1] == correctedWords[j] {
+                    // Extra word in original
+                    let beforeWord = i > 0 ? originalWords[i-1] : ""
+                    let afterWord = i+1 < originalWords.count ? originalWords[i+1] : ""
+                    
+                    let contextInfo = !beforeWord.isEmpty && !afterWord.isEmpty ?
+                    "between '\(beforeWord)' and '\(afterWord)'" :
+                    (!beforeWord.isEmpty ? "after '\(beforeWord)'" :
+                        (!afterWord.isEmpty ? "before '\(afterWord)'" : ""))
+                    
+                    differences.append(TextDifference(
+                        original: originalWords[i],
+                        corrected: "extra word \(contextInfo)",
+                        isLikelySpellingError: false
+                    ))
+                    i += 1  // Only advance original index
                 } else {
-                    dp[i][j] = min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]) + 1
+                    // Simple replacement
+                    differences.append(TextDifference(
+                        original: originalWords[i],
+                        corrected: correctedWords[j],
+                        isLikelySpellingError: true
+                    ))
+                    i += 1
+                    j += 1
                 }
             }
         }
         
-        return dp[m][n]
+        // Handle trailing words in either text
+        while i < originalWords.count {
+            let beforeWord = i > 0 ? originalWords[i-1] : ""
+            differences.append(TextDifference(
+                original: originalWords[i],
+                corrected: "extra word after '\(beforeWord)'",
+                isLikelySpellingError: false
+            ))
+            i += 1
+        }
+        
+        while j < correctedWords.count {
+            let beforeWord = j > 0 ? correctedWords[j-1] : ""
+            differences.append(TextDifference(
+                original: "missing word after '\(beforeWord)'",
+                corrected: correctedWords[j],
+                isLikelySpellingError: false
+            ))
+            j += 1
+        }
+        
+        return differences
     }
 }

@@ -33,6 +33,7 @@ class ViewController: UIViewController, UITextFieldDelegate, WCSessionDelegate, 
     let t5Inference = T5Inference() // Create an instance of T5Inference
     var voiceRecognitionManager: SimpleVoiceRecognitionManager?
     var textErrorAnalyzer: TextErrorAnalyzer?
+    
 
     override func viewDidLoad() {
         super.viewDidLoad()
