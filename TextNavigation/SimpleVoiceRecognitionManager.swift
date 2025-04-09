@@ -53,7 +53,7 @@ enum VoiceOperation: String {
             return (.period, nil)
         }
         
-        if lowerText == "comma" {
+        if lowerText == "comma" || lowerText == "," {
             return (.comma, nil)
         }
         
@@ -98,7 +98,7 @@ enum VoiceOperation: String {
         }
         
         if lowerText.hasPrefix("replace ") {
-            let content = String(lowerText.dropFirst("insert ".count))
+            let content = String(lowerText.dropFirst("replace ".count))
             return (.insert, content)
         }
         
@@ -111,14 +111,12 @@ enum VoiceOperation: String {
 class SimpleVoiceRecognitionManager: NSObject {
     // MARK: - Properties
     
-    private let speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+    private let speechRecognizer: SFSpeechRecognizer?
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
     private var textErrorAnalyzer: TextErrorAnalyzer?
-    
-    // Store the last recognized text
     private var lastRecognizedText: String = ""
-
+    
     private let audioEngine = AVAudioEngine()
     
     // Private variables
@@ -131,6 +129,7 @@ class SimpleVoiceRecognitionManager: NSObject {
     init(textField: UITextField?, errorAnalyzer: TextErrorAnalyzer? = nil) {
         self.textField = textField
         self.textErrorAnalyzer = errorAnalyzer
+        self.speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
         super.init()
         
         // Request speech recognition authorization
@@ -173,9 +172,8 @@ class SimpleVoiceRecognitionManager: NSObject {
         // Process last recognized text if available
         if !lastRecognizedText.isEmpty {
             print("Voice: Processing final recognized text before stopping: '\(lastRecognizedText)'")
-            DispatchQueue.main.async { [weak self] in
-                self?.processRecognizedText(self?.lastRecognizedText ?? "")
-            }
+            // Process directly without dispatch to async
+            processRecognizedText(lastRecognizedText)
         }
         
         // Cancel recognition task
@@ -199,7 +197,7 @@ class SimpleVoiceRecognitionManager: NSObject {
         
         isListening = false
         
-        // Clear the last recognized text
+        // Clear the last recognized text AFTER processing it
         lastRecognizedText = ""
         
         // Notify completion
@@ -243,8 +241,15 @@ class SimpleVoiceRecognitionManager: NSObject {
             return
         }
         
-        // Configure for partial results
-        recognitionRequest.shouldReportPartialResults = true
+        // Configure for enhanced recognition (iOS 16+)
+        if #available(iOS 16.0, *) {
+            recognitionRequest.requiresOnDeviceRecognition = true
+            recognitionRequest.shouldReportPartialResults = true
+            recognitionRequest.taskHint = .dictation
+        } else {
+            // Configure for partial results on older devices
+            recognitionRequest.shouldReportPartialResults = true
+        }
         
         // Setup audio tap
         let inputNode = audioEngine.inputNode
@@ -269,19 +274,26 @@ class SimpleVoiceRecognitionManager: NSObject {
                 if let error = error {
                     // Check if it's just a cancellation error (which is normal)
                     let isCancellationError = (error as NSError).domain == "kAFAssistantErrorDomain" &&
-                                             (error as NSError).code == 1
+                                             (error as NSError).code == 1 ||
+                                             error.localizedDescription.contains("canceled")
                     
                     if !isCancellationError {
                         print("Voice: Recognition error: \(error.localizedDescription)")
                         
                         // Notify error
-                        NotificationCenter.default.post(
-                            name: NSNotification.Name("VoiceRecognitionError"),
-                            object: nil,
-                            userInfo: ["error": error.localizedDescription]
-                        )
+                        //NotificationCenter.default.post(
+                            //name: NSNotification.Name("VoiceRecognitionError"),
+                            //object: nil,
+                            //userInfo: ["error": error.localizedDescription]
+                        //)
                     } else {
                         print("Voice: Recognition stopped normally")
+                        
+                        // If we have a stored partial result and it was a cancellation, process it
+                        if !self.lastRecognizedText.isEmpty {
+                            print("Voice: Processing stored partial result: '\(self.lastRecognizedText)'")
+                            self.processRecognizedText(self.lastRecognizedText)
+                        }
                     }
                     return
                 }
@@ -306,6 +318,9 @@ class SimpleVoiceRecognitionManager: NSObject {
                             print("Voice: Processing command: '\(textToProcess)'")
                             self.processRecognizedText(textToProcess)
                             
+                            // Clear stored text after processing
+                            self.lastRecognizedText = ""
+                            
                             // Stop listening after processing a valid command
                             self.stopListening()
                         }
@@ -325,6 +340,12 @@ class SimpleVoiceRecognitionManager: NSObject {
     }
     
     private func processRecognizedText(_ text: String) {
+        // Skip empty text
+        if text.isEmpty {
+            print("Voice: Skipping processing of empty text")
+            return
+        }
+        
         print("Voice: Processing final text: '\(text)'")
         
         // Parse the voice operation
@@ -480,7 +501,7 @@ class SimpleVoiceRecognitionManager: NSObject {
             
         case .line, .sentenceCorrection:
             // Delete the entire line/sentence
-            if let text = textField.text {
+            if let _ = textField.text {
                 textField.text = ""
             }
         }
@@ -651,79 +672,6 @@ class SimpleVoiceRecognitionManager: NSObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + finalDelay) {
             UIAccessibility.post(notification: .announcement, argument: "All errors have been announced.")
             print("Voice: Announced completion of error reading")
-        }
-    }
-
-    // Helper to announce each error individually with pauses
-    private func announceIndividualErrors(_ errors: [DetectedError]) {
-        guard !errors.isEmpty else { return }
-        
-        var index = 0
-        
-        // Function to announce the next error
-        func announceNext() {
-            guard index < errors.count else { return }
-            
-            let error = errors[index]
-            var announcement = "Error \(index + 1): "
-            
-            if let errorText = error.errorText, let correction = error.correction {
-                announcement += "\(error.type.description.capitalized) error: '\(errorText)' should be '\(correction)'."
-            } else {
-                announcement += error.description
-            }
-            
-            // Announce with delay to ensure it's heard
-            DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * 3.0) {
-                UIAccessibility.post(notification: .announcement, argument: announcement)
-                print("Voice: Announcing individual error: \(announcement)")
-            }
-            
-            index += 1
-        }
-        
-        // Start the announcement sequence
-        announceNext()
-    }
-    
-    // Helper to highlight the first error
-    private func highlightFirstError(_ errors: [DetectedError], in textField: UITextField) {
-        // First try to highlight using the error's range if available
-        if let firstErrorWithRange = errors.first(where: { $0.range != nil }),
-           let errorRange = firstErrorWithRange.range,
-           let beginningPosition = textField.position(from: textField.beginningOfDocument, offset: errorRange.location),
-           let endPosition = textField.position(from: beginningPosition, offset: errorRange.length) {
-            
-            // Select the error text to visually highlight it
-            textField.selectedTextRange = textField.textRange(from: beginningPosition, to: endPosition)
-            print("Voice: Highlighted first error in text field")
-        }
-        // If no range but we have errorText, try to find and highlight it
-        else if let firstErrorWithText = errors.first(where: { $0.errorText != nil }),
-                let errorText = firstErrorWithText.errorText,
-                let text = textField.text {
-            
-            if let range = text.range(of: errorText, options: .caseInsensitive) {
-                let nsRange = NSRange(range, in: text)
-                if let beginningPosition = textField.position(from: textField.beginningOfDocument, offset: nsRange.location),
-                   let endPosition = textField.position(from: beginningPosition, offset: nsRange.length) {
-                    
-                    textField.selectedTextRange = textField.textRange(from: beginningPosition, to: endPosition)
-                    print("Voice: Highlighted error text: '\(errorText)' in text field")
-                }
-            }
-        }
-        // Special case for "I has" error
-        else if let text = textField.text, text.lowercased().contains("i has") {
-            if let range = text.range(of: "I has", options: .caseInsensitive) {
-                let nsRange = NSRange(range, in: text)
-                if let beginningPosition = textField.position(from: textField.beginningOfDocument, offset: nsRange.location),
-                   let endPosition = textField.position(from: beginningPosition, offset: nsRange.length) {
-                    
-                    textField.selectedTextRange = textField.textRange(from: beginningPosition, to: endPosition)
-                    print("Voice: Highlighted 'I has' error in text field")
-                }
-            }
         }
     }
     
@@ -940,24 +888,25 @@ class SimpleVoiceRecognitionManager: NSObject {
             announcement = "Reading text field content"
         case .unselect:
             announcement = "Selection cleared"
-        case .cursorPosition:
-            // This will be handled by the announceCursorPosition method
-            announcement = ""
-        case .bold:
-            announcement = "Applied bold formatting"
-        case .italic:
-            announcement = "Applied italic formatting"
-        case .underline:
-            announcement = "Applied underline formatting"
-        case .clearFormat:
-            announcement = "Cleared formatting"
-        case .unknown:
-            announcement = "No command: \(content ?? "")"
-        }
-        
-        // Announce via VoiceOver if it's running
-        if UIAccessibility.isVoiceOverRunning && !announcement.isEmpty {
-            UIAccessibility.post(notification: .announcement, argument: announcement)
-        }
-    }
-}
+            case .cursorPosition:
+                       // This will be handled by the announceCursorPosition method
+                       announcement = ""
+                   case .bold:
+                       announcement = "Applied bold formatting"
+                   case .italic:
+                       announcement = "Applied italic formatting"
+                   case .underline:
+                       announcement = "Applied underline formatting"
+                   case .clearFormat:
+                       announcement = "Cleared formatting"
+                   case .unknown:
+                       announcement = "No command: \(content ?? "")"
+                   }
+                   
+                   // Announce via VoiceOver if it's running
+                   if UIAccessibility.isVoiceOverRunning && !announcement.isEmpty {
+                       UIAccessibility.post(notification: .announcement, argument: announcement)
+                   }
+               }
+            }
+

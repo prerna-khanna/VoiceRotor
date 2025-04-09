@@ -1,10 +1,3 @@
-//
-//  ViewController+VoiceIntegration.swift
-//  TextNavigation
-//
-//  Created by Prerna Khanna on 4/3/25.
-//
-
 import UIKit
 import WatchConnectivity
 import Speech
@@ -12,15 +5,12 @@ import Speech
 // Extension to add improved voice control functionality to ViewController
 extension ViewController {
     
-    
     // MARK: - Setup
     
     func setupSimpleVoiceRecognition() {
         // Initialize text error analyzer with the existing T5Inference instance
         self.textErrorAnalyzer = TextErrorAnalyzer(t5Inference: t5Inference)
         print("Voice: Created TextErrorAnalyzer with existing T5Inference instance")
-        
-        
         
         // Create voice recognition manager with text field and analyzer
         voiceRecognitionManager = SimpleVoiceRecognitionManager(textField: userInputTextField, errorAnalyzer: self.textErrorAnalyzer)
@@ -30,6 +20,7 @@ extension ViewController {
         
         print("Voice: Simple voice recognition manager setup complete with error analysis capability")
     }
+    
     private func setupVoiceRecognitionObservers() {
         // Add observers for voice recognition events
         NotificationCenter.default.addObserver(
@@ -46,12 +37,12 @@ extension ViewController {
             object: nil
         )
         
-        /*NotificationCenter.default.addObserver(
+        NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleVoiceRecognitionError(_:)),
             name: NSNotification.Name("VoiceRecognitionError"),
             object: nil
-        )*/
+        )
         
         NotificationCenter.default.addObserver(
             self,
@@ -69,10 +60,6 @@ extension ViewController {
         // Show visual feedback
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            
-            // Update UI to show listening state
-            //self.messageLabel.text = "Listening for voice commands..."
-            //self.messageLabel.textColor = .red
             
             // Haptic feedback for blind users
             let generator = UINotificationFeedbackGenerator()
@@ -102,7 +89,6 @@ extension ViewController {
             
             // Reset UI
             self.updateOptionDisplay()
-            self.messageLabel.textColor = .black
             
             // Announce via VoiceOver
             if UIAccessibility.isVoiceOverRunning {
@@ -123,8 +109,7 @@ extension ViewController {
         }
         
         if !session.isReachable {
-            print("Voice: Watch not reachable, storing status update for later")
-            // Could implement a queue for pending messages
+            print("Voice: Watch not reachable")
             return
         }
         
@@ -144,7 +129,6 @@ extension ViewController {
     }
     
     // Process voice commands from watch
-    // In the processWatchVoiceCommand method
     func processWatchVoiceCommand(from message: [String: Any]) {
         if let voiceCommand = message["voiceCommand"] as? String {
             DispatchQueue.main.async { [weak self] in
@@ -155,7 +139,7 @@ extension ViewController {
                     self.startVoiceRecognition()
                 case "stopListening":
                     // Add a small delay to allow final recognition processing to complete
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
                         self.stopVoiceRecognition()
                     }
                 default:
@@ -173,10 +157,6 @@ extension ViewController {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             
-            // Update UI for listening state
-            //self.messageLabel.text = "Listening for voice commands..."
-            //self.messageLabel.textColor = .red
-            
             // Inform watch
             self.sendVoiceStatusToWatch(status: "listening")
         }
@@ -190,7 +170,6 @@ extension ViewController {
             
             // Restore normal UI
             self.updateOptionDisplay()
-            self.messageLabel.textColor = .black
             
             // Inform watch
             self.sendVoiceStatusToWatch(status: "stopped")
@@ -203,14 +182,16 @@ extension ViewController {
             return
         }
         
+        // Ignore cancellation errors
+        if errorMessage.contains("canceled") || errorMessage.contains("cancelled") {
+            print("Voice: Ignoring cancellation error")
+            return
+        }
+        
         print("Voice: Recognition error: \(errorMessage)")
         
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            
-            // Update UI to show error
-            //self.messageLabel.text = "Voice recognition error"
-            //self.messageLabel.textColor = .red
             
             // Announce to VoiceOver
             if UIAccessibility.isVoiceOverRunning {
@@ -223,7 +204,6 @@ extension ViewController {
             // Reset UI after delay
             DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
                 self.updateOptionDisplay()
-                self.messageLabel.textColor = .black
             }
         }
     }
@@ -240,18 +220,12 @@ extension ViewController {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             
-            // Update UI to show success
-            let operationName = operation.isEmpty ? "unknown" : operation
-            let successMessage = "Voice command: \(operationName) \(content)"
-            //self.messageLabel.text = successMessage
-            
             // Inform watch with recognized text
             self.sendVoiceStatusToWatch(status: "recognized", text: content)
             
             // Reset UI after delay
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                 self.updateOptionDisplay()
-                self.messageLabel.textColor = .black
             }
         }
     }
