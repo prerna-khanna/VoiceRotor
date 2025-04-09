@@ -3,11 +3,11 @@ import Speech
 import AVFoundation
 import UIKit
 
-// Enhanced operation-based voice commands
 enum VoiceOperation: String {
     case type = "type"
     case delete = "delete"
     case insert = "insert"
+    case replace = "replace"  // Added replace operation
     case bold = "bold"
     case italic = "italic"
     case underline = "underline"
@@ -99,9 +99,8 @@ enum VoiceOperation: String {
         
         if lowerText.hasPrefix("replace ") {
             let content = String(lowerText.dropFirst("replace ".count))
-            return (.insert, content)
+            return (.replace, content)
         }
-        
         
         // Default is to just type the content
         return (.unknown, lowerText)
@@ -340,12 +339,6 @@ class SimpleVoiceRecognitionManager: NSObject {
     }
     
     private func processRecognizedText(_ text: String) {
-        // Skip empty text
-        if text.isEmpty {
-            print("Voice: Skipping processing of empty text")
-            return
-        }
-        
         print("Voice: Processing final text: '\(text)'")
         
         // Parse the voice operation
@@ -379,7 +372,12 @@ class SimpleVoiceRecognitionManager: NSObject {
                 
             case .insert:
                 if let content = content {
-                    self.performInsert(content)
+                    self.performInsert(content, shouldReplace: false)
+                }
+                
+            case .replace:
+                if let content = content {
+                    self.performInsert(content, shouldReplace: true)
                 }
                 
             // Handle punctuation operations
@@ -461,6 +459,89 @@ class SimpleVoiceRecognitionManager: NSObject {
                     "content": content ?? ""
                 ]
             )
+        }
+    }
+
+        // Refactored insert method to handle both insert and replace
+    private func performInsert(_ content: String, shouldReplace: Bool = true) {
+        guard let textField = self.textField,
+              let selectedRange = textField.selectedTextRange else {
+            return
+        }
+        
+        // Determine if text is selected (not just a cursor position)
+        let hasSelection = !selectedRange.isEmpty
+        
+        // Handle based on granularity
+        switch selectedGranularity {
+        case .character:
+            if hasSelection && !shouldReplace {
+                // For insert in character mode with a selection: insert AFTER the selection
+                let insertPosition = selectedRange.end // Changed to .end to insert after selection
+                
+                // Create a new range just at the position after the selection
+                if let emptyRange = textField.textRange(from: insertPosition, to: insertPosition) {
+                    // Insert the content after the selection
+                    textField.replace(emptyRange, withText: content)
+                }
+            } else {
+                // For replace in character mode or no selection: replace the selection with content
+                textField.replace(selectedRange, withText: content)
+            }
+            
+        case .word, .line, .sentenceCorrection:
+            if hasSelection && !shouldReplace {
+                // For insert in word/line mode with a selection
+                
+                // Insert content AFTER the selection with proper spacing
+                let insertPosition = selectedRange.end // Changed to .end to insert after selection
+                
+                if let insertRange = textField.textRange(from: insertPosition, to: insertPosition) {
+                    // Add space before inserted content if it doesn't start with space
+                    // and we're not at the beginning of text
+                    var contentWithSpace = content
+                    
+                    // For word granularity, handle spacing correctly
+                    if selectedGranularity == .word {
+                        // Add leading space if needed (if we're not at the end of text
+                        // and not after a space already)
+                        let needsLeadingSpace = insertPosition != textField.beginningOfDocument &&
+                                               !contentWithSpace.hasPrefix(" ")
+                                               
+                        if needsLeadingSpace {
+                            // Check if there's already a space before where we're inserting
+                            if let beforePos = textField.position(from: insertPosition, offset: -1),
+                               let beforeRange = textField.textRange(from: beforePos, to: insertPosition),
+                               let charBefore = textField.text(in: beforeRange),
+                               !charBefore.hasPrefix(" ") {
+                                contentWithSpace = " " + contentWithSpace
+                            }
+                        }
+                        
+                        // Add trailing space if needed
+                        if !contentWithSpace.hasSuffix(" ") && insertPosition != textField.endOfDocument {
+                            contentWithSpace += " "
+                        }
+                    }
+                    
+                    // Insert at the position after selection
+                    textField.replace(insertRange, withText: contentWithSpace)
+                }
+            } else {
+                // For replace in word/line mode or no selection: replace the selection with content
+                
+                // Add space if needed for replacement (for word granularity)
+                var replacementText = content
+                
+                // Only add space for word granularity and if we're not at the end of text
+                if selectedGranularity == .word &&
+                   selectedRange.end != textField.endOfDocument &&
+                   !content.hasSuffix(" ") {
+                    replacementText += " "
+                }
+                
+                textField.replace(selectedRange, withText: replacementText)
+            }
         }
     }
     
@@ -901,7 +982,9 @@ class SimpleVoiceRecognitionManager: NSObject {
                        announcement = "Cleared formatting"
                    case .unknown:
                        announcement = "No command: \(content ?? "")"
-                   }
+        case .replace:
+            announcement = "Replaced: \(content ?? "")"
+        }
                    
                    // Announce via VoiceOver if it's running
                    if UIAccessibility.isVoiceOverRunning && !announcement.isEmpty {
