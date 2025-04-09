@@ -53,7 +53,7 @@ enum VoiceOperation: String {
             return (.period, nil)
         }
         
-        if lowerText == "comma" {
+        if lowerText == "comma" || lowerText == "," {
             return (.comma, nil)
         }
         

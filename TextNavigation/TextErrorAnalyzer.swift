@@ -1,8 +1,3 @@
-//
-//  TextErrorAnalyzer.swift
-//  TextNavigation
-//
-
 import Foundation
 import UIKit
 
@@ -44,30 +39,11 @@ class TextErrorAnalyzer {
     private let t5Inference: T5Inference?
     private let spellChecker = UITextChecker()
     
-    // Custom dictionary for common misspellings
-    private let customCorrections: [String: String] = [
-        "droping": "dropping",
-        "degres": "degrees",
-        "wether": "weather",
-        "cloths": "clothes",
-        "posibility": "possibility",
-        "precipation": "precipitation",
-        "bringign": "bringing",
-        "waering": "wearing",
-        "cancled": "canceled",
-        "unfavorble": "unfavorable",
-        "condtions": "conditions",
-        "reccomend": "recommend",
-        "umbella": "umbrella",
-        "forcast": "forecast",
-        "wekend": "weekend",
-        "tempratures": "temperatures"
-    ]
-    
     // MARK: - Initialization
     
     init(t5Inference: T5Inference? = nil) {
         self.t5Inference = t5Inference
+        print("TextErrorAnalyzer: Initialized with Grammarly model")
     }
     
     // MARK: - Public Methods
@@ -86,80 +62,69 @@ class TextErrorAnalyzer {
             return
         }
         
-        // Results arrays
-        var errors: [DetectedError] = []
-        
-        // STEP 1: Perform basic spelling checks using UITextChecker as a fallback
-        let localSpellingErrors = checkSpelling(text)
-        
-        // STEP 2: Add basic grammar checks (these always run locally)
-        let localGrammarErrors = checkBasicGrammar(text)
-        
-        // STEP 3: Use T5 model for comprehensive correction if available
+        // STEP 1: Try the T5/Grammarly model first if available
         if let t5Inference = t5Inference, t5Inference.modelIsLoaded {
-            // Create a dispatch group to coordinate API calls
+            // Create a dispatch group for synchronized API calls
             let group = DispatchGroup()
-            
-            // Variable to store model errors
             var modelErrors: [DetectedError] = []
             
-            // Enter the group for the API call
+            // Enter the group
             group.enter()
             
-            // Use the model for both spelling and grammar correction
+            // Use the Grammarly model for correction
             t5Inference.correctText(text) { [weak self] correctedText in
                 defer { group.leave() }
-                guard let self = self, let correctedText = correctedText, correctedText != text else { return }
+                guard let self = self else { return }
                 
-                print("TextErrorAnalyzer: Received model correction: \"\(correctedText)\"")
-                
-                // Find the differences between original and corrected text
-                let differences = self.findTextDifferences(original: text, corrected: correctedText)
-                
-                // Add each difference as an error
-                for diff in differences {
-                    let errorType: ErrorType = diff.isLikelySpellingError ? .spelling : .grammar
-                    modelErrors.append(DetectedError(
-                        type: errorType,
-                        description: "\(errorType.description.capitalized) error: '\(diff.original)' should be '\(diff.corrected)'",
-                        errorText: diff.original,
-                        correction: diff.corrected
-                    ))
+                if let correctedText = correctedText, correctedText != text {
+                    print("TextErrorAnalyzer: Received model correction: \"\(correctedText)\"")
+                    
+                    // Find all differences between original and corrected text
+                    let differences = self.findTextDifferences(original: text, corrected: correctedText)
+                    print("TextErrorAnalyzer: Found \(differences.count) differences between original and corrected text")
+                    
+                    // Convert differences to errors
+                    for diff in differences {
+                        modelErrors.append(DetectedError(
+                            type: diff.type,
+                            description: "\(diff.type.description.capitalized) error: '\(diff.original)' should be '\(diff.corrected)'.",
+                            errorText: diff.original,
+                            correction: diff.corrected
+                        ))
+                    }
+                } else {
+                    print("TextErrorAnalyzer: Model found no corrections needed or returned nil")
                 }
-                
-                print("TextErrorAnalyzer: Found \(differences.count) errors using language model")
             }
             
-            // Wait for API call with timeout (3 seconds)
+            // Wait for a maximum of 3 seconds for the model to respond
             let waitResult = group.wait(timeout: .now() + 3.0)
             
+            // If the model provided errors and didn't time out, use those
             if waitResult == .success && !modelErrors.isEmpty {
-                // Use model errors if available
-                errors = modelErrors
-                print("TextErrorAnalyzer: Using \(modelErrors.count) errors from language model")
+                // Remove duplicates (same error text, different descriptions)
+                let uniqueErrors = self.removeDuplicateErrors(modelErrors)
+                print("TextErrorAnalyzer: Using \(uniqueErrors.count) errors from Grammarly model")
+                completion(uniqueErrors)
+                return
             } else {
-                // Fall back to local errors if model failed or timed out
-                errors = localSpellingErrors + localGrammarErrors
                 if waitResult == .timedOut {
-                    print("TextErrorAnalyzer: T5 inference timed out, using local checks")
+                    print("TextErrorAnalyzer: Grammarly model timed out, falling back to local checks")
                 } else {
-                    print("TextErrorAnalyzer: T5 model returned no errors, using local checks")
+                    print("TextErrorAnalyzer: Grammarly model provided no errors, falling back to local checks")
                 }
+                // Fall back to local checks
+                let localErrors = performLocalChecks(text)
+                completion(localErrors)
+                return
             }
         } else {
-            // Use local checks if model isn't available
-            errors = localSpellingErrors + localGrammarErrors
-            print("TextErrorAnalyzer: T5 model not available, using local checks only")
+            // If model isn't available, use local checks
+            print("TextErrorAnalyzer: Grammarly model not available, using local checks")
+            let localErrors = performLocalChecks(text)
+            completion(localErrors)
+            return
         }
-        
-        // Limit to most important errors if there are too many
-        if errors.count > 5 {
-            errors = Array(errors.prefix(5))
-            print("TextErrorAnalyzer: Limiting to top 5 errors for clarity")
-        }
-        
-        print("TextErrorAnalyzer: Analysis complete. Found \(errors.count) errors")
-        completion(errors)
     }
     
     // Format errors into an accessibility-friendly message with punctuation pronunciation
@@ -168,7 +133,7 @@ class TextErrorAnalyzer {
             return "No errors detected."
         }
         
-        // Create a more specific message that announces exactly where errors are
+        // Create a specific message that announces exactly where errors are
         var message = "Found \(errors.count) potential \(errors.count > 1 ? "issues" : "issue"): "
         
         for (index, error) in errors.enumerated() {
@@ -178,9 +143,7 @@ class TextErrorAnalyzer {
             switch error.type {
             case .spelling, .grammar:
                 if let errorText = error.errorText, let correction = error.correction {
-                    // Add explicit pronunciation of punctuation in the correction
-                    let pronounceableCorrection = addPronounceablePunctuation(correction)
-                    message += "\n\(errorNumber). \(error.type.description.capitalized) error: '\(errorText)' should be '\(pronounceableCorrection)'."
+                    message += "\n\(errorNumber). \(error.type.description.capitalized) error: '\(errorText)' should be '\(correction)'."
                 } else {
                     message += "\n\(errorNumber). \(error.description)"
                 }
@@ -196,20 +159,61 @@ class TextErrorAnalyzer {
     
     // MARK: - Private Methods
     
-    /// Check for spelling errors using UITextChecker and custom dictionary
-    private func checkSpelling(_ text: String) -> [DetectedError] {
+    // Remove duplicate errors (same error text with different descriptions)
+    private func removeDuplicateErrors(_ errors: [DetectedError]) -> [DetectedError] {
+        var uniqueErrors: [DetectedError] = []
+        var seenErrorTexts: Set<String> = []
+        
+        for error in errors {
+            if let errorText = error.errorText {
+                let normalizedText = errorText.lowercased()
+                if !seenErrorTexts.contains(normalizedText) {
+                    uniqueErrors.append(error)
+                    seenErrorTexts.insert(normalizedText)
+                }
+            } else {
+                // Always include errors without specific error text
+                uniqueErrors.append(error)
+            }
+        }
+        
+        return uniqueErrors
+    }
+    
+    // Perform local checks for common errors
+    private func performLocalChecks(_ text: String) -> [DetectedError] {
         var errors: [DetectedError] = []
         
-        // Create a range for the entire text
-        let range = NSRange(location: 0, length: (text as NSString).length)
+        // Check for missing capitalization at the beginning
+        if let firstChar = text.first, firstChar.isLowercase, firstChar.isLetter {
+            let upper = String(firstChar).uppercased()
+            errors.append(DetectedError(
+                type: .grammar,
+                description: "Grammar error: Sentence should start with a capital letter",
+                errorText: String(firstChar),
+                correction: upper
+            ))
+            print("TextErrorAnalyzer: Found capitalization error at beginning of sentence")
+        }
         
-        // Initialize variables for the loop
+        // Check for missing ending punctuation
+        if text.count > 3 && !text.hasSuffix(".") && !text.hasSuffix("!") && !text.hasSuffix("?") {
+            errors.append(DetectedError(
+                type: .grammar,
+                description: "Grammar error: Sentence should end with punctuation",
+                errorText: text,
+                correction: text + "."
+            ))
+            print("TextErrorAnalyzer: Found missing end punctuation")
+        }
+        
+        // Check for standard spelling errors using UITextChecker
+        let range = NSRange(location: 0, length: (text as NSString).length)
         var searchRange = range
         var misspelledRange = NSRange(location: NSNotFound, length: 0)
         
-        // Check for multiple misspellings
+        // Look for misspelled words
         repeat {
-            // Find the next misspelled word
             misspelledRange = spellChecker.rangeOfMisspelledWord(
                 in: text,
                 range: searchRange,
@@ -217,38 +221,28 @@ class TextErrorAnalyzer {
                 wrap: false,
                 language: "en")
             
-            // If we found a misspelling
             if misspelledRange.location != NSNotFound {
-                // Get the misspelled word
                 let misspelledWord = (text as NSString).substring(with: misspelledRange)
                 
-                // Check custom dictionary first
-                var correction: String?
-                if let customCorrection = customCorrections[misspelledWord.lowercased()] {
-                    correction = customCorrection
-                } else {
-                    // Get spelling suggestions from system
-                    let suggestions = spellChecker.guesses(
-                        forWordRange: misspelledRange,
-                        in: text,
-                        language: "en") ?? []
-                    correction = suggestions.first
+                // Get suggestions
+                let suggestions = spellChecker.guesses(
+                    forWordRange: misspelledRange,
+                    in: text,
+                    language: "en") ?? []
+                
+                // Add error if we have a suggestion
+                if !suggestions.isEmpty {
+                    errors.append(DetectedError(
+                        type: .spelling,
+                        description: "Spelling error: '\(misspelledWord)' should be '\(suggestions[0])'",
+                        range: misspelledRange,
+                        errorText: misspelledWord,
+                        correction: suggestions[0]
+                    ))
+                    print("TextErrorAnalyzer: Found spelling error: '\(misspelledWord)'")
                 }
                 
-                // Create error object
-                let error = DetectedError(
-                    type: .spelling,
-                    description: "Spelling error: '\(misspelledWord)'" +
-                        (correction != nil ? " (Suggestion: \(correction!))" : ""),
-                    range: misspelledRange,
-                    errorText: misspelledWord,
-                    correction: correction
-                )
-                
-                errors.append(error)
-                print("TextErrorAnalyzer: Found spelling error: '\(misspelledWord)'")
-                
-                // Update search range to continue after this misspelling
+                // Update search range
                 searchRange = NSRange(
                     location: misspelledRange.location + misspelledRange.length,
                     length: range.length - (misspelledRange.location + misspelledRange.length)
@@ -256,155 +250,163 @@ class TextErrorAnalyzer {
             }
         } while misspelledRange.location != NSNotFound && searchRange.length > 0
         
+        // Check for capitalization of proper names
+        let words = text.components(separatedBy: .whitespacesAndNewlines)
+        for word in words {
+            if word.count > 1 && word.first?.isLowercase == true {
+                // Check if this word should be capitalized (if capitalized version is not flagged as misspelled)
+                let capitalizedWord = word.prefix(1).uppercased() + word.dropFirst()
+                let wordRange = NSRange(location: 0, length: capitalizedWord.utf16.count)
+                
+                let isMisspelled = spellChecker.rangeOfMisspelledWord(
+                    in: capitalizedWord,
+                    range: wordRange,
+                    startingAt: 0,
+                    wrap: false,
+                    language: "en").location != NSNotFound
+                
+                // If the capitalized version is NOT misspelled, it's probably a proper noun
+                if !isMisspelled {
+                    // Find this word in the original text
+                    if let range = text.range(of: word) {
+                        let nsRange = NSRange(range, in: text)
+                        errors.append(DetectedError(
+                            type: .spelling,
+                            description: "Spelling error: '\(word)' should be '\(capitalizedWord)'",
+                            range: nsRange,
+                            errorText: word,
+                            correction: capitalizedWord
+                        ))
+                        print("TextErrorAnalyzer: Found proper noun capitalization error: '\(word)'")
+                    }
+                }
+            }
+        }
+        
+        // Limit to 5 errors max
+        if errors.count > 5 {
+            errors = Array(errors.prefix(5))
+            print("TextErrorAnalyzer: Limiting to top 5 errors for clarity")
+        }
+        
+        print("TextErrorAnalyzer: Analysis complete. Found \(errors.count) errors")
         return errors
-    }
-    
-    /// Check for basic grammar errors without API
-    private func checkBasicGrammar(_ text: String) -> [DetectedError] {
-        var errors: [DetectedError] = []
-        
-        // Check for "I has" error (common)
-        if text.lowercased().range(of: "i has") != nil {
-            let description = "Grammar error: 'I has' should be 'I have' (subject-verb agreement)"
-            errors.append(DetectedError(
-                type: .grammar,
-                description: description,
-                errorText: "I has",
-                correction: "I have"
-            ))
-            print("TextErrorAnalyzer: Found local grammar error: 'I has'")
-        }
-        
-        // Check for missing capitalization at the beginning of the sentence
-        if let firstChar = text.first, firstChar.isLowercase,
-           firstChar.isLetter, text.count > 2 {
-            let errorText = String(firstChar)
-            let correction = String(firstChar).uppercased()
-            let description = "Grammar error: Sentence should start with capital letter"
-            errors.append(DetectedError(
-                type: .grammar,
-                description: description,
-                errorText: errorText,
-                correction: correction
-            ))
-            print("TextErrorAnalyzer: Found capitalization error at beginning of sentence")
-        }
-        
-        // Check for missing period at the end
-        if text.count > 5 && !text.hasSuffix(".") && !text.hasSuffix("?") && !text.hasSuffix("!") {
-            let description = "Grammar error: Sentence should end with punctuation"
-            errors.append(DetectedError(
-                type: .grammar,
-                description: description,
-                errorText: text,
-                correction: text + "."
-            ))
-            print("TextErrorAnalyzer: Found missing end punctuation")
-        }
-        
-        // Check for double punctuation
-        if text.contains("..") || text.contains(",,") || text.contains("!.") || text.contains("?.") {
-            let description = "Grammar error: Double punctuation should be avoided"
-            errors.append(DetectedError(
-                type: .grammar,
-                description: description,
-                errorText: "double punctuation",
-                correction: "single punctuation"
-            ))
-            print("TextErrorAnalyzer: Found double punctuation")
-        }
-        
-        return errors
-    }
-    
-    // Add pronounceable punctuation for accessibility
-    private func addPronounceablePunctuation(_ text: String) -> String {
-        var result = text
-        
-        // Replace punctuation with spoken versions
-        result = result.replacingOccurrences(of: ".", with: " period")
-        result = result.replacingOccurrences(of: ",", with: " comma")
-        result = result.replacingOccurrences(of: "?", with: " question mark")
-        result = result.replacingOccurrences(of: "!", with: " exclamation point")
-        result = result.replacingOccurrences(of: ":", with: " colon")
-        result = result.replacingOccurrences(of: ";", with: " semicolon")
-        result = result.replacingOccurrences(of: "-", with: " dash")
-        result = result.replacingOccurrences(of: "(", with: " open parenthesis")
-        result = result.replacingOccurrences(of: ")", with: " close parenthesis")
-        result = result.replacingOccurrences(of: "'", with: " apostrophe")
-        result = result.replacingOccurrences(of: "\"", with: " quote")
-        
-        return result
     }
     
     // Structure to represent differences between texts
     private struct TextDifference {
         let original: String
         let corrected: String
-        let isLikelySpellingError: Bool
+        let type: ErrorType
     }
     
-    // Find differences between original and corrected text
+    // Find detailed differences between original and corrected text
     private func findTextDifferences(original: String, corrected: String) -> [TextDifference] {
         var differences: [TextDifference] = []
         
-        // Split into words for comparison
-        let originalWords = original.components(separatedBy: .whitespacesAndNewlines)
-        let correctedWords = corrected.components(separatedBy: .whitespacesAndNewlines)
+        // Break down to sentences first
+        let originalSentences = original.components(separatedBy: [".","!","?"])
+        let correctedSentences = corrected.components(separatedBy: [".","!","?"])
         
-        // Compare word by word where possible
-        let minWords = min(originalWords.count, correctedWords.count)
+        // If sentence count differs dramatically, just use word-by-word comparison
+        if abs(originalSentences.count - correctedSentences.count) > 2 {
+            return findWordDifferences(original: original, corrected: corrected)
+        }
         
-        for i in 0..<minWords {
-            let origWord = originalWords[i]
-            let corrWord = correctedWords[i]
+        // Compare each sentence
+        let sentenceCount = min(originalSentences.count, correctedSentences.count)
+        for i in 0..<sentenceCount {
+            let origSentence = originalSentences[i].trimmingCharacters(in: .whitespacesAndNewlines)
+            let corrSentence = correctedSentences[i].trimmingCharacters(in: .whitespacesAndNewlines)
             
-            if origWord != corrWord {
-                // Calculate edit distance to determine if it's likely a spelling error
-                let distance = calculateEditDistance(origWord.lowercased(), corrWord.lowercased())
-                let maxLength = max(origWord.count, corrWord.count)
-                
-                // If edit distance is small relative to word length, likely spelling error
-                // otherwise it's probably a grammar error
-                let isSpellingError = Double(distance) / Double(maxLength) < 0.5
-                
+            // Skip empty sentences
+            if origSentence.isEmpty || corrSentence.isEmpty {
+                continue
+            }
+            
+            // If sentences are different, find word-level differences
+            if origSentence != corrSentence {
+                let sentenceDiffs = findWordDifferences(original: origSentence, corrected: corrSentence)
+                differences.append(contentsOf: sentenceDiffs)
+            }
+        }
+        
+        // If we didn't find any specific differences but texts differ
+        if differences.isEmpty && original != corrected {
+            // Check for missing punctuation
+            if corrected.hasSuffix(".") && !original.hasSuffix(".") {
                 differences.append(TextDifference(
-                    original: origWord,
-                    corrected: corrWord,
-                    isLikelySpellingError: isSpellingError
+                    original: original,
+                    corrected: original + ".",
+                    type: .grammar
+                ))
+            } else {
+                // Use the whole text as one difference
+                differences.append(TextDifference(
+                    original: original,
+                    corrected: corrected,
+                    type: .grammar
                 ))
             }
         }
         
-        // If the texts are different lengths, add extra words as differences
-        if originalWords.count < correctedWords.count {
-            // Words added in correction
-            for i in minWords..<correctedWords.count {
+        return differences
+    }
+    
+    // Find word-level differences between texts
+    private func findWordDifferences(original: String, corrected: String) -> [TextDifference] {
+        var differences: [TextDifference] = []
+        
+        // Split into words
+        let origWords = original.components(separatedBy: .whitespacesAndNewlines)
+        let corrWords = corrected.components(separatedBy: .whitespacesAndNewlines)
+        
+        // Compare word by word
+        let wordCount = min(origWords.count, corrWords.count)
+        for i in 0..<wordCount {
+            if origWords[i] != corrWords[i] {
+                // Determine if it's a spelling or grammar issue
+                let type: ErrorType
+                
+                // If words are similar (just case or close edit distance), it's likely spelling
+                if origWords[i].lowercased() == corrWords[i].lowercased() {
+                    type = .grammar // Capitalization is grammar
+                } else {
+                    // Calculate edit distance to check if it's a minor spelling correction
+                    let distance = calculateEditDistance(origWords[i], corrWords[i])
+                    let maxLength = max(origWords[i].count, corrWords[i].count)
+                    
+                    // If edit distance is small relative to word length, it's spelling
+                    type = (distance <= 2 || Double(distance) / Double(maxLength) < 0.5) ? .spelling : .grammar
+                }
+                
+                differences.append(TextDifference(
+                    original: origWords[i],
+                    corrected: corrWords[i],
+                    type: type
+                ))
+            }
+        }
+        
+        // Check for extra or missing words
+        if origWords.count < corrWords.count {
+            // Extra words in correction
+            for i in wordCount..<corrWords.count {
                 differences.append(TextDifference(
                     original: "(missing)",
-                    corrected: correctedWords[i],
-                    isLikelySpellingError: false
+                    corrected: corrWords[i],
+                    type: .grammar
                 ))
             }
-        } else if originalWords.count > correctedWords.count {
-            // Words removed in correction
-            for i in minWords..<originalWords.count {
+        } else if origWords.count > corrWords.count {
+            // Missing words in correction
+            for i in wordCount..<origWords.count {
                 differences.append(TextDifference(
-                    original: originalWords[i],
+                    original: origWords[i],
                     corrected: "(should be removed)",
-                    isLikelySpellingError: false
+                    type: .grammar
                 ))
             }
-        }
-        
-        // If we didn't find any specific differences but texts are different
-        if differences.isEmpty && original != corrected {
-            // Fall back to treating the entire text as one difference
-            differences.append(TextDifference(
-                original: original,
-                corrected: corrected,
-                isLikelySpellingError: false
-            ))
         }
         
         return differences

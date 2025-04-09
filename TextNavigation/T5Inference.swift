@@ -1,13 +1,8 @@
-//
-//  T5Inference.swift
-//  TextNavigation
-//
-
 import Foundation
 
 class T5Inference {
-    // Use the grammar correction specific model
-    private let apiUrl = "https://api-inference.huggingface.co/models/vennify/t5-base-grammar-correction"
+    // Use the Grammarly coedit-large model
+    private let apiUrl = "https://api-inference.huggingface.co/models/grammarly/coedit-large"
     private let apiKey: String
     private var isModelLoaded = false
     private let modelLoadingQueue = DispatchQueue(label: "modelLoadingQueue", attributes: .concurrent)
@@ -29,7 +24,7 @@ class T5Inference {
 
     func loadModel(completion: @escaping (Bool) -> Void) {
         // Simple test request to check if model is loaded
-        let testInput = "grammar: i has appls in tha kitchen"
+        let testInput = "i has some apples in the kitchen"
         inferenceRequest(with: testInput, retryCount: maxRetries) { [weak self] result in
             guard let self = self else { return }
             
@@ -60,8 +55,8 @@ class T5Inference {
             return
         }
         
-        // Use the grammar prefix that the model expects
-        let prompt = "grammar: \(text)"
+        // The Grammarly model doesn't need a specific prefix unlike the previous model
+        let prompt = text
         
         inferenceRequest(with: prompt, retryCount: maxRetries) { result in
             switch result {
@@ -71,6 +66,7 @@ class T5Inference {
                     DispatchQueue.main.async {
                         // Clean up the response
                         let cleanedOutput = self.cleanResponse(output)
+                        print("T5: Corrected text from '\(text)' to '\(cleanedOutput)'")
                         completion(cleanedOutput)
                     }
                 } else {
@@ -95,38 +91,7 @@ class T5Inference {
     
     // Method specifically focused on spelling corrections
     func correctSpelling(_ text: String, completion: @escaping (String?) -> Void) {
-        // Skip empty text
-        guard !text.isEmpty else {
-            DispatchQueue.main.async {
-                completion(nil)
-            }
-            return
-        }
-        
-        // Use a prompt that emphasizes spelling correction
-        let prompt = "grammar: \(text)"  // Using grammar prompt works for spelling too
-        
-        inferenceRequest(with: prompt, retryCount: maxRetries) { result in
-            switch result {
-            case .success(let output):
-                if self.isValidEnglishResponse(output, originalText: text) {
-                    DispatchQueue.main.async {
-                        let cleanedOutput = self.cleanResponse(output)
-                        completion(cleanedOutput)
-                    }
-                } else {
-                    print("T5: Spelling correction failed: Response not in English or invalid")
-                    DispatchQueue.main.async {
-                        completion(nil)
-                    }
-                }
-            case .failure(let error):
-                print("T5: Spelling correction failed: \(error.localizedDescription)")
-                DispatchQueue.main.async {
-                    completion(nil)
-                }
-            }
-        }
+        correctText(text, completion: completion)
     }
     
     // Enhanced request method with retry logic
@@ -144,7 +109,7 @@ class T5Inference {
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
         request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         
-        // Prepare payload WITHOUT language parameter that caused the error
+        // Prepare payload for the Grammarly model
         let payload: [String: Any] = ["inputs": text]
         
         do {
@@ -153,6 +118,8 @@ class T5Inference {
             completion(.failure(error))
             return
         }
+        
+        print("T5: Sending request to Grammarly model with text: \"\(text)\"")
         
         // Create and start the task
         URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
@@ -216,7 +183,12 @@ class T5Inference {
                 return
             }
             
-            // Parse the response
+            // Debug: print raw response
+            if let rawResponse = String(data: data, encoding: .utf8) {
+                print("T5: Raw API response: \(rawResponse)")
+            }
+            
+            // Parse the response - Grammarly model may have different output format
             do {
                 if let jsonResponse = try JSONSerialization.jsonObject(with: data) as? [[String: Any]],
                    let firstResult = jsonResponse.first,
@@ -224,6 +196,16 @@ class T5Inference {
                     print("T5: Successfully parsed response: \(generatedText)")
                     completion(.success(generatedText))
                 } else {
+                    // Try alternate parsing for different response formats
+                    if let rawResponse = String(data: data, encoding: .utf8) {
+                        // Check if it's a simple string response (some models return this)
+                        if rawResponse.count > 0 && !rawResponse.contains("{") && !rawResponse.contains("[") {
+                            print("T5: Using raw response as correction: \(rawResponse)")
+                            completion(.success(rawResponse))
+                            return
+                        }
+                    }
+                    
                     print("T5: Invalid response format")
                     
                     // Try again if we have retries left
@@ -256,50 +238,42 @@ class T5Inference {
     
     // Helper method to verify the response is valid English
     private func isValidEnglishResponse(_ response: String, originalText: String) -> Bool {
-        // Check if response contains the original prompt
-        if response.contains("grammar:") || response.contains("fix spelling:") {
+        // Skip empty responses
+        if response.isEmpty {
             return false
         }
         
-        // Check if response is in German or other non-English language
-        let commonGermanWords = ["ich", "habe", "sind", "und", "der", "die", "das", "für", "mit", "Grammatik"]
-        for word in commonGermanWords {
-            if response.contains(word) {
-                return false
-            }
-        }
-        
-        // Check for common English words
-        let commonEnglishWords = ["I", "have", "the", "is", "are", "and", "to", "for", "with"]
-        for word in commonEnglishWords {
-            if response.contains(word) {
-                return true
-            }
-        }
-        
-        // Fallback to checking if response is different from input but still similar
-        if response != originalText && response.count > 2 {
+        // If the response is exactly the same as the original, there were no errors to correct
+        if response == originalText {
             return true
         }
         
-        return false
+        // The Grammarly model should always return English text
+        // Let's do some basic checks
+        
+        // Check for non-Latin characters (which would suggest non-English)
+        let nonLatinCharCount = response.unicodeScalars.filter { !CharacterSet.latinExtended.contains($0) }.count
+        if nonLatinCharCount > 5 {
+            return false
+        }
+        
+        // Grammarly model should provide reasonable length responses
+        if response.count < 2 || response.count > originalText.count * 2 {
+            return false
+        }
+        
+        // If we made it here, assume it's valid
+        return true
     }
     
     // Helper method to clean up responses
     private func cleanResponse(_ response: String) -> String {
-        // Remove any prefixes that might be artifacts from the model
-        var cleaned = response
-            .replacingOccurrences(of: "grammar:", with: "")
-            .replacingOccurrences(of: "Grammar:", with: "")
-            .replacingOccurrences(of: "fix spelling:", with: "")
-            .replacingOccurrences(of: "Fix spelling:", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        
-        // If the cleaned result is empty, return the original response
-        if cleaned.isEmpty {
-            return response
-        }
-        
-        return cleaned
+        // Just trim whitespace for the Grammarly model
+        return response.trimmingCharacters(in: .whitespacesAndNewlines)
     }
+}
+
+// Extension to help with character validation
+extension CharacterSet {
+    static let latinExtended = CharacterSet(charactersIn: UnicodeScalar(0x0000)!...UnicodeScalar(0x024F)!)
 }
