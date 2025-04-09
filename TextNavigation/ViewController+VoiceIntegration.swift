@@ -214,13 +214,29 @@ extension ViewController {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             
+            // Set the flag to indicate text was modified by voice
+            self.textModifiedByVoice = true
+            
+            // Update UI to show success
+            let operationName = operation.isEmpty ? "unknown" : operation
+            let successMessage = "Voice command: \(operationName) \(content)"
+            //self.messageLabel.text = successMessage
+            
             // Inform watch with recognized text
             self.sendVoiceStatusToWatch(status: "recognized", text: content)
             
-            // Reset UI after delay
-            //DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-            //    self.updateOptionDisplay()
-            //}
+            // Reset just the message label after delay
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                // Just update the message label, not the text field
+                //self.messageLabel.text = "Voice command processed"
+                //self.messageLabel.textColor = .black
+            }
         }
+    }
+    
+    func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString string: String) -> Bool {
+        // Set the flag to indicate text was modified manually
+        textModifiedByVoice = true
+        return true
     }
 }

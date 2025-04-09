@@ -34,6 +34,9 @@ class ViewController: UIViewController, UITextFieldDelegate, WCSessionDelegate, 
     var voiceRecognitionManager: SimpleVoiceRecognitionManager?
     var textErrorAnalyzer: TextErrorAnalyzer?
     
+     var sliderJustChanged = false
+     var textModifiedByVoice = false
+    
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -581,16 +584,17 @@ private func handleCrownRotation(delta: Double) {
         updateSliderValueLabel()
     }
 
+    // Then modify your sliderValueChanged method
     @IBAction func sliderValueChanged(_ sender: UISlider) {
         let roundedValue = round(sender.value)
         sender.value = roundedValue
         selectedOption = Int(roundedValue)
-
-        print("Slider changed to option: \(selectedOption)") // Debug print
+        
+        // Set flag to indicate slider was just changed
+        sliderJustChanged = true
+        
+        updateOptionDisplay()
         updateSliderValueLabel()
-
-        updateOptionDisplay() // This should set userInputTextField.text
-        print("userInputTextField.text = \(userInputTextField.text ?? "nil")") // Debug print
     }
 
     func updateSliderValueLabel() {
@@ -628,10 +632,21 @@ private func handleCrownRotation(delta: Double) {
             ""
         ]
         
-        messageLabel.text = options[selectedOption - 1]
-        userInputTextField.text = incorrectSentences[selectedOption - 1]
         
+        messageLabel.text = options[selectedOption - 1]
+        
+        // Only update the text field if voice hasn't modified it
+        // OR if the slider was just changed (forced update)
+        if !textModifiedByVoice || sliderJustChanged {
+            userInputTextField.text = incorrectSentences[selectedOption - 1]
+            // Reset the flag since we've updated from slider
+            textModifiedByVoice = false
+            // Reset the slider change flag
+            sliderJustChanged = false
+        }
     }
+   
+
     
     private func updateFonts() {
     // Update font for UILabel

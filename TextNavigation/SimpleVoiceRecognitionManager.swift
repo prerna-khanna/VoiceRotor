@@ -436,15 +436,10 @@ class SimpleVoiceRecognitionManager: NSObject {
                 }
                 
             case .unknown:
-                // For unknown commands, if text is selected, do nothing
-                // If no text is selected, treat as "type" and append text
-                if !hasSelection && content != nil && !content!.isEmpty {
-                    self.performAppend(content!)
-                } else if hasSelection {
                     // Announce that command is not recognized
                     UIAccessibility.post(notification: .announcement,
                                         argument: "Command not recognized. Try delete, type, insert, bold, italic, or underline")
-                }
+                
             }
             
             // Announce what happened for VoiceOver users
