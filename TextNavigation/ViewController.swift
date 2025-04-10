@@ -578,7 +578,7 @@ private func handleCrownRotation(delta: Double) {
 
     func setupSlider() {
         optionSlider.minimumValue = 1
-        optionSlider.maximumValue = 11
+        optionSlider.maximumValue = 12
         optionSlider.value = 1
         optionSlider.isContinuous = true
         updateSliderValueLabel()
@@ -604,31 +604,32 @@ private func handleCrownRotation(delta: Double) {
 
     func updateOptionDisplay() {
         let options = [
-            "She went to the store yesterday.",  // Case 1: Missing "the"
-            "She is going to buy new car next month.",  // Case 2: Missing "is"
-            "They are waiting for bus at the corner.",  // Case 3: Missing "are" and "the"
-            "He gave me the book yesterday.",  // Case 4: "gived" -> "gave"
-            "We bought groceries for dinner tonight.",  // Case 5: "buyed" -> "bought"
-            "The students wrote their essays last week.",  // Case 6: "writed" -> "wrote"
-            "My sister works at the hospital downtown.",  // Case 7: Extra "she"
-            "The document that I wrote contains important information.",  // Case 8: Extra "it"
-            "When the professor explained the concept, I understood it.",  // Case 9: Extra "he"
-            "John is going to visit his parents tomorrow.",  // Case 10: Extra "he" and "to"
+            "test",
+            "The students wrote their essays last week.",          // Case 6 (verb tense)
+            "She went to the store yesterday.",                    // Case 1 (missing article)
+            "When the professor explained the concept, I understood it.", // Case 9 (extra pronoun)
+            "We bought groceries for dinner tonight.",             // Case 5 (verb past tense)
+            "They are waiting for the bus at the corner.",         // Case 3 (missing words)
+            "The document that I wrote contains important information.", // Case 8 (extra word)
+            "John is going to visit his parents tomorrow.",        // Case 10 (extra words)
+            "He gave me the book yesterday.",                      // Case 4 (verb form)
+            "My sister works at the hospital downtown.",           // Case 7 (extra pronoun)
+            "She is going to buy a new car next month.",           // Case 2 (missing word)
             "The weather forecast for NYC this weekend shows temperatures dropping to 40 degrees with possibility of precipitation on Saturday. We recommend bringing an umbrella and wearing warm clothes when venturing outdoors. The city's park's will remain open but outdoor events may be canceled due to the unfavorable conditions."
-
         ]
-        
+
         let incorrectSentences = [
-            "She went to store yesterday.",  // Case 1: Missing "the"
-            "She going to buy new car next month.",  // Case 2: Missing "is"
-            "They waiting for bus at corner.",  // Case 3: Missing "are" and "the"
-            "He gived me the book yesterday.",  // Case 4: "gived" -> "gave"
-            "We buyed groceries for dinner tonight.",  // Case 5: "buyed" -> "bought"
-            "The students writed their essays last week.",  // Case 6: "writed" -> "wrote"
-            "My sister she works at the hospital downtown.",  // Case 7: Extra "she"
-            "The document that I wrote it contains important information.",  // Case 8: Extra "it"
-            "When the professor he explained the concept, I understood it.",  // Case 9: Extra "he"
-            "John he is going to to visit his parents tomorrow.",  // Case 10: Extra "he" and "to"
+            "",
+            "The students writed their essays last week.",         // Case 6 (verb tense)
+            "She went to store yesterday.",                        // Case 1 (missing article)
+            "When the professor he explained the concept, I understood it.", // Case 9 (extra pronoun)
+            "We bout groceries for dinner tonight.",              // Case 5 (verb past tense)
+            "They waiting for bus at corner.",                     // Case 3 (missing words)
+            "The document that I wrote it contains important information.", // Case 8 (extra word)
+            "John he is going to to visit his parents tomorrow.",  // Case 10 (extra words)
+            "He give me the book yesterday.",                     // Case 4 (verb form)
+            "My sister she works at the hospital downtown.",       // Case 7 (extra pronoun)
+            "She going to buy new car next month.",                // Case 2 (missing word)
             ""
         ]
         

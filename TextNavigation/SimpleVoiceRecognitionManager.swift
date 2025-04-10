@@ -21,6 +21,7 @@ enum VoiceOperation: String {
     case read = "read"
     case unselect = "unselect"
     case cursorPosition = "cursor"
+    case spell = "spell"
     case unknown
    
     // Parse from recognized text
@@ -85,6 +86,9 @@ enum VoiceOperation: String {
         if lowerText == "clear format" || lowerText == "clear formatting" {
             return (.clearFormat, nil)
         }
+        if lowerText == "spell" || lowerText == "spell out" || lowerText == "spell word" || lowerText == "spell letter by letter" {
+                    return (.spell, nil)
+                }
         
         // Commands with content
         if lowerText.hasPrefix("type ") {
@@ -93,11 +97,13 @@ enum VoiceOperation: String {
         }
         
         if lowerText.hasPrefix("insert ") {
+            //let prefix = lowerText.hasPrefix("insert ") ? "insert " : "add "
             let content = String(lowerText.dropFirst("insert ".count))
             return (.insert, content)
         }
         
         if lowerText.hasPrefix("replace ") {
+            //let prefix = lowerText.hasPrefix("replace ") ? "replace " : "change "
             let content = String(lowerText.dropFirst("replace ".count))
             return (.replace, content)
         }
@@ -440,6 +446,8 @@ class SimpleVoiceRecognitionManager: NSObject {
                     UIAccessibility.post(notification: .announcement,
                                         argument: "Command not recognized. Try delete, type, insert, bold, italic, or underline")
                 
+            case .spell:
+                self.spellOutSelectedText()
             }
             
             // Announce what happened for VoiceOver users
@@ -456,6 +464,155 @@ class SimpleVoiceRecognitionManager: NSObject {
             )
         }
     }
+    
+    private func spellOutSelectedText() {
+           guard let textField = self.textField,
+                 let selectedRange = textField.selectedTextRange else {
+               return
+           }
+           
+           // Check if there's a selection or just cursor position
+           let hasSelection = !selectedRange.isEmpty
+           
+           if !hasSelection {
+               // If no selection, try to get the word at cursor position
+               if let wordRange = findWordRangeAroundCursor(in: textField) {
+                   if let wordText = textField.text(in: wordRange) {
+                       spellOutText(wordText)
+                       return
+                   }
+               }
+               
+               // If no word found or couldn't get text, announce error
+               UIAccessibility.post(notification: .announcement,
+                                   argument: "No text selected to spell. Please select text first.")
+               return
+           }
+           
+           // If text is selected, get the selected text and spell it
+           if let selectedText = textField.text(in: selectedRange) {
+               spellOutText(selectedText)
+           } else {
+               UIAccessibility.post(notification: .announcement,
+                                   argument: "Unable to get selected text to spell.")
+           }
+       }
+       
+       // Helper method to spell out text with proper pauses
+       private func spellOutText(_ text: String) {
+           if text.isEmpty {
+               UIAccessibility.post(notification: .announcement,
+                                   argument: "No text to spell.")
+               return
+           }
+           
+           // First announce that we're going to spell the text
+           UIAccessibility.post(notification: .announcement,
+                               argument: "Spelling: \(text)")
+           
+           // Wait a moment before spelling
+           DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+               // Create the spelled version with pauses
+               let letters = Array(text)
+               var spelledText = ""
+               
+               // Build the spelled text with proper formatting
+               for (index, letter) in letters.enumerated() {
+                   let letterDescription: String
+                   
+                   if letter.isLetter {
+                       // Handle special cases for better pronunciation
+                       switch letter.lowercased() {
+                       case "a": letterDescription = "A as in Alpha"
+                       case "b": letterDescription = "B as in Bravo"
+                       case "c": letterDescription = "C as in Charlie"
+                       case "d": letterDescription = "D as in Delta"
+                       case "e": letterDescription = "E as in Echo"
+                       case "f": letterDescription = "F as in Foxtrot"
+                       case "g": letterDescription = "G as in Golf"
+                       case "h": letterDescription = "H as in Hotel"
+                       case "i": letterDescription = "I as in India"
+                       case "j": letterDescription = "J as in Juliet"
+                       case "k": letterDescription = "K as in Kilo"
+                       case "l": letterDescription = "L as in Lima"
+                       case "m": letterDescription = "M as in Mike"
+                       case "n": letterDescription = "N as in November"
+                       case "o": letterDescription = "O as in Oscar"
+                       case "p": letterDescription = "P as in Papa"
+                       case "q": letterDescription = "Q as in Quebec"
+                       case "r": letterDescription = "R as in Romeo"
+                       case "s": letterDescription = "S as in Sierra"
+                       case "t": letterDescription = "T as in Tango"
+                       case "u": letterDescription = "U as in Uniform"
+                       case "v": letterDescription = "V as in Victor"
+                       case "w": letterDescription = "W as in Whiskey"
+                       case "x": letterDescription = "X as in X-ray"
+                       case "y": letterDescription = "Y as in Yankee"
+                       case "z": letterDescription = "Z as in Zulu"
+                       default: letterDescription = String(letter)
+                       }
+                   } else if letter.isNumber {
+                       letterDescription = "Number \(letter)"
+                   } else if letter == " " {
+                       letterDescription = "Space"
+                   } else {
+                       // Handle punctuation and special characters
+                       switch letter {
+                       case ".": letterDescription = "Period"
+                       case ",": letterDescription = "Comma"
+                       case "?": letterDescription = "Question mark"
+                       case "!": letterDescription = "Exclamation mark"
+                       case ";": letterDescription = "Semicolon"
+                       case ":": letterDescription = "Colon"
+                       case "-": letterDescription = "Hyphen"
+                       case "_": letterDescription = "Underscore"
+                       case "/": letterDescription = "Slash"
+                       case "\\": letterDescription = "Backslash"
+                       case "'": letterDescription = "Single quote"
+                       case "\"": letterDescription = "Double quote"
+                       case "(": letterDescription = "Open parenthesis"
+                       case ")": letterDescription = "Close parenthesis"
+                       case "[": letterDescription = "Open bracket"
+                       case "]": letterDescription = "Close bracket"
+                       case "{": letterDescription = "Open brace"
+                       case "}": letterDescription = "Close brace"
+                       case "@": letterDescription = "At sign"
+                       case "#": letterDescription = "Hash"
+                       case "$": letterDescription = "Dollar sign"
+                       case "%": letterDescription = "Percent"
+                       case "^": letterDescription = "Caret"
+                       case "&": letterDescription = "Ampersand"
+                       case "*": letterDescription = "Asterisk"
+                       case "+": letterDescription = "Plus"
+                       case "=": letterDescription = "Equals"
+                       case "<": letterDescription = "Less than"
+                       case ">": letterDescription = "Greater than"
+                       case "|": letterDescription = "Pipe"
+                       case "~": letterDescription = "Tilde"
+                       default: letterDescription = "Symbol \(letter)"
+                       }
+                   }
+                   
+                   // Add letter number for reference
+                   spelledText += "Letter \(index + 1): \(letterDescription)."
+                   
+                   // Schedule each letter announcement with appropriate delay
+                   let delay = 1.0 + Double(index) * 2.5
+                   
+                   DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                       UIAccessibility.post(notification: .announcement,
+                                           argument: "Letter \(index + 1): \(letterDescription)")
+                   }
+               }
+               
+               // Schedule final announcement
+               let finalDelay = 1.0 + Double(letters.count) * 2.5 + 1.0
+               DispatchQueue.main.asyncAfter(deadline: .now() + finalDelay) {
+                   UIAccessibility.post(notification: .announcement,
+                                       argument: "End of spelling.")
+               }
+           }
+       }
 
         // Refactored insert method to handle both insert and replace
     private func performInsert(_ content: String, shouldReplace: Bool = true) {
@@ -1011,6 +1168,8 @@ class SimpleVoiceRecognitionManager: NSObject {
                        announcement = "No command: \(content ?? "")"
         case .replace:
             announcement = "Replaced: \(content ?? "")"
+        case .spell:
+                    announcement = "Spelling selected text"
         }
                    
                    // Announce via VoiceOver if it's running
