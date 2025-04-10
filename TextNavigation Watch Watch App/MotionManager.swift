@@ -7,17 +7,23 @@ class MotionManager: NSObject, ObservableObject {
     private var motionManager = CMMotionManager()
     private var session: WCSession?
     private var streamTimer: Timer?
-    private let streamDuration: TimeInterval = 20.0 // 20 seconds streaming duration
+    private var keepAwakeTimer: Timer?
+    private let streamDuration: TimeInterval = 20.0
     
     @Published var rotationRateX: Double = 0.0
     @Published var rotationRateY: Double = 0.0
     @Published var rotationRateZ: Double = 0.0
     @Published var isSendingData: Bool = false
     @Published var timeRemaining: Int = 20
+    @Published var displayKeepAliveCounter: Int = 0  // This forces UI updates
     
     override init() {
         super.init()
         setupSession()
+    }
+    
+    deinit {
+        stopKeepingDisplayAwake()
     }
     
     private func setupSession() {
@@ -56,6 +62,9 @@ class MotionManager: NSObject, ObservableObject {
         // Play haptic feedback when starting data collection
         WKInterfaceDevice.current().play(.success)
         
+        // Keep the display awake by forcing UI updates
+        startKeepingDisplayAwake()
+        
         // Start timer to stop sending after 20 seconds
         streamTimer?.invalidate()
         streamTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
@@ -81,11 +90,38 @@ class MotionManager: NSObject, ObservableObject {
         streamTimer?.invalidate()
         streamTimer = nil
         
+        // Stop keeping display awake
+        stopKeepingDisplayAwake()
+        
         // Play a distinct haptic when streaming stops automatically
         WKInterfaceDevice.current().play(.notification)
         
         // Send a notification to the phone that motion data collection has stopped
         sendStatusUpdate(started: false)
+    }
+    
+    // Method to keep display awake via frequent UI updates
+    private func startKeepingDisplayAwake() {
+        keepAwakeTimer?.invalidate()
+        keepAwakeTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            // Update a published property to force UI refresh
+            guard let self = self else { return }
+            self.displayKeepAliveCounter += 1
+            
+            // Force haptic feedback occasionally to maintain user attention
+            if self.displayKeepAliveCounter % 10 == 0 {
+                // Very light tap every 5 seconds
+                WKInterfaceDevice.current().play(.click)
+            }
+            
+            print("Keeping display active via UI updates...")
+        }
+    }
+    
+    private func stopKeepingDisplayAwake() {
+        keepAwakeTimer?.invalidate()
+        keepAwakeTimer = nil
+        print("Stopped keeping display active")
     }
     
     private func sendStatusUpdate(started: Bool) {

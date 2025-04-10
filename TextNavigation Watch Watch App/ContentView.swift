@@ -47,6 +47,17 @@ struct WatchAppView: View {
                     Text("Motion: \(motionManager.timeRemaining)s")
                         .font(.caption)
                         .foregroundColor(.orange)
+                    
+                    // This hidden text forces UI updates using the counter
+                    Text("\(motionManager.displayKeepAliveCounter)")
+                        .font(.system(size: 1))
+                        .opacity(0.01) // Nearly invisible but still triggers updates
+                        .accessibility(hidden: true)
+                    
+                    // Show indicator that display is being kept on
+                    Text("Display kept active")
+                        .font(.caption2)
+                        .foregroundColor(.green)
                 } else if motionManager.isSendingData {
                     Text("Motion ending...")
                         .font(.caption)
